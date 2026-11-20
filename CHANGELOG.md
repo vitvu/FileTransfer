@@ -10,7 +10,9 @@ All notable changes to this project are documented here. The format follows [Kee
 - 6-digit room codes for connecting across networks; rooms hold two devices and expire after 10 minutes empty.
 - Backpressure and read-ahead on the sender; streaming to disk on the receiver (File System Access API) with an in-memory fallback.
 - Transfer popup for sender and receiver: who it is from, image preview or file-type icon, size, Accept / Decline, live progress and result; the page behind it is hidden and inert.
-- Image previews: a small JPEG thumbnail (under 16 KB) travels with the offer, validated by the receiver.
+- Image previews: a JPEG thumbnail (about 15-35 KB) travels with the offer, validated by the receiver. Tall or wide images fit inside the popup and the buttons always stay on screen.
+- The other device shows a waiting popup ("X is choosing a file…") as soon as Send is pressed; it turns into the file prompt when a file is picked, and closes if the picker is cancelled.
+- No more "could not connect" message after a successful transfer: a link that worked and later goes away is dropped silently.
 - Small files download directly (no save dialog); files over 200 MB ask where to save on Chrome/Edge and stream to disk. Dismissing the save dialog returns to the prompt instead of failing.
 - Cloudflare Worker + Durable Object signaling server with an origin allow-list and no logging.
 - Home page with a 6-box room-code entry next to same-network discovery, plus step-by-step hints.

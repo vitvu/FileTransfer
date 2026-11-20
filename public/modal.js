@@ -1,5 +1,6 @@
 // The transfer popup: one dialog that shows the incoming / outgoing file (image preview or a file-type icon),
 // who it is from / to, progress, and the actions. While it is open the rest of the page is hidden and inert.
+// It can start in a "pending" state ("X is choosing a file…") and switch to the file with setFile().
 import { t } from "./i18n.js";
 import { deviceIcon, deviceLabel } from "./device.js";
 
@@ -12,14 +13,15 @@ export const fmt = (n) => {
 
 // ---------- thumbnails ----------
 const THUMB_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/;
-export const validThumb = (s) => typeof s === "string" && s.length < 20000 && THUMB_RE.test(s);
+const THUMB_MAX = 40000; // characters of the data URL
+export const validThumb = (s) => typeof s === "string" && s.length < THUMB_MAX && THUMB_RE.test(s);
 
-// Small JPEG preview (<16 KB) of an image, sent along with the file offer. Returns null if not possible.
+// JPEG preview (about 15-35 KB) of an image, sent along with the file offer. Returns null if not possible.
 export async function makeThumb(file) {
   if (!/^image\/(jpeg|png|gif|webp|avif|bmp)$/.test(file.type) || file.size > 30 * 1024 * 1024) return null;
   try {
     const bmp = await createImageBitmap(file);
-    for (const [max, q] of [[160, 0.7], [120, 0.55], [96, 0.45]]) {
+    for (const [max, q] of [[360, 0.72], [280, 0.6], [200, 0.55], [120, 0.45]]) {
       const s = Math.min(1, max / Math.max(bmp.width, bmp.height));
       const c = document.createElement("canvas");
       c.width = Math.max(1, Math.round(bmp.width * s));
@@ -29,7 +31,7 @@ export async function makeThumb(file) {
       g.fillRect(0, 0, c.width, c.height);
       g.drawImage(bmp, 0, 0, c.width, c.height);
       const url = c.toDataURL("image/jpeg", q);
-      if (url.length < 16000) {
+      if (url.length < THUMB_MAX - 2000) {
         if (bmp.close) bmp.close();
         return url;
       }
@@ -67,7 +69,8 @@ const SKELETON = `
 <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="m-title">
   <div class="m-peer"><span class="avatar"></span><div class="who"><b></b><small></small></div></div>
   <h3 id="m-title" class="m-title"></h3>
-  <div class="m-file">
+  <div class="m-wait" hidden><span class="spin"></span><span class="m-wait-text"></span></div>
+  <div class="m-file" hidden>
     <div class="m-thumb"><span class="m-ext"></span><span class="m-badge"></span></div>
     <div class="m-meta"><div class="m-name"></div><div class="m-size"></div></div>
   </div>
@@ -84,7 +87,7 @@ const BADGES = {
 let open = false;
 export const isTransferOpen = () => open;
 
-// opts: { dir: "in" | "out", name, size, type, peer: {name, dev}, thumb }
+// opts: { dir: "in" | "out", peer: {name, dev}, pending?: true, name, size, type, thumb }
 export function openTransfer(opts) {
   const root = document.getElementById("modal");
   root.innerHTML = SKELETON;
@@ -100,17 +103,9 @@ export function openTransfer(opts) {
   q(".who b").textContent = peer.name || "";
   q(".who small").textContent = deviceLabel(peer.dev);
   q(".m-title").textContent = t(opts.dir === "in" ? "incomingTitle" : "sendingTitle");
-  q(".m-name").textContent = opts.name;
-  q(".m-size").textContent = fmt(opts.size);
 
-  const { cat, ext } = fileKind(opts.name, opts.type);
+  const fileBox = q(".m-file");
   const thumbBox = q(".m-thumb");
-  const setIcon = () => {
-    thumbBox.classList.remove("has-img");
-    thumbBox.querySelector("img")?.remove();
-    thumbBox.insertAdjacentHTML("afterbegin", ICONS[cat] || ICONS.file); // constant markup
-    q(".m-ext").textContent = ext.slice(0, 4).toUpperCase();
-  };
   const setThumb = (url) => {
     if (!validThumb(url)) return;
     thumbBox.querySelector("svg")?.remove();
@@ -119,10 +114,29 @@ export function openTransfer(opts) {
     img.alt = "";
     img.src = url;
     thumbBox.classList.add("has-img");
+    fileBox.classList.add("big"); // a real preview gets the full width of the popup
     thumbBox.prepend(img);
   };
-  setIcon();
-  if (opts.thumb) setThumb(opts.thumb);
+  // Fill in (or change to) the file being transferred.
+  const setFile = ({ name, size, type, thumb }) => {
+    q(".m-wait").hidden = true;
+    fileBox.hidden = false;
+    q(".m-name").textContent = name;
+    q(".m-size").textContent = fmt(size);
+    const { cat, ext } = fileKind(name, type);
+    thumbBox.querySelector("svg")?.remove();
+    thumbBox.querySelector("img")?.remove();
+    thumbBox.classList.remove("has-img");
+    fileBox.classList.remove("big");
+    thumbBox.insertAdjacentHTML("afterbegin", ICONS[cat] || ICONS.file); // constant markup
+    q(".m-ext").textContent = ext.slice(0, 4).toUpperCase();
+    if (thumb) setThumb(thumb);
+  };
+
+  if (opts.pending) {
+    q(".m-wait").hidden = false;
+    fileBox.hidden = true;
+  } else setFile(opts);
 
   let ended = false;
   const close = () => {
@@ -144,6 +158,10 @@ export function openTransfer(opts) {
   const ui = {
     close,
     setThumb,
+    setFile,
+    pending(text) {
+      q(".m-wait-text").textContent = text;
+    },
     pct(p) {
       q(".m-progress").hidden = false;
       q(".bar i").style.width = p.toFixed(1) + "%";

@@ -71,10 +71,7 @@ function peerCard(p) {
   const btn = document.createElement("button");
   btn.className = "btn small";
   btn.textContent = t("send");
-  btn.onclick = () => {
-    pickFor = p.id;
-    $("#file").click();
-  };
+  btn.onclick = () => startPick(p.id);
   card.append(av, who, btn);
   card.ondragover = (e) => (e.preventDefault(), card.classList.add("drag"));
   card.ondragleave = () => card.classList.remove("drag");
@@ -119,11 +116,33 @@ function renderStatic() {
   renderMe();
 }
 
+// Pressing "Send" opens the file picker and, at the same time, lets the other device know that someone is
+// choosing a file, so its popup is already waiting. Cancelling the picker withdraws that notice.
+function startPick(pid) {
+  pickFor = pid;
+  const c = conns.get(pid) || mkConn(pid, true);
+  c.choosing = true;
+  if (c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "choosing", on: true }));
+  $("#file").click();
+}
+
+function stopChoosing(pid) {
+  const c = conns.get(pid);
+  if (!c || !c.choosing) return;
+  c.choosing = false;
+  if (c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "choosing", on: false }));
+}
+
 $("#file").onchange = (e) => {
   const f = e.target.files[0];
   e.target.value = "";
-  if (f && pickFor) sendFile(pickFor, f);
+  if (f && pickFor) {
+    const c = conns.get(pickFor);
+    if (c) c.choosing = false; // the offer that follows replaces the "choosing" notice
+    sendFile(pickFor, f);
+  } else if (pickFor) stopChoosing(pickFor);
 };
+$("#file").addEventListener("cancel", () => pickFor && stopChoosing(pickFor));
 
 function mkMeter(ui, total) {
   const t0 = performance.now();
@@ -243,12 +262,14 @@ function onSignal(m) {
 // ---------------- WebRTC ----------------
 function mkConn(pid, initiator) {
   const pc = new RTCPeerConnection(ICE);
-  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0 };
+  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0, opened: false, choosing: false, pre: null, preTimer: 0 };
   conns.set(pid, c);
   pc.onicecandidate = (e) => e.candidate && sig(pid, { c: e.candidate });
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === "failed" && conns.get(pid) === c) {
-      setStatus(t("p2pFail"), true);
+      // Only an error if we never managed to connect. A link that worked and later went away (the other
+      // tab was closed, the phone went to sleep) is dropped silently and re-created on the next send.
+      if (!c.opened) setStatus(t("p2pFail"), true);
       closeConn(pid);
     }
   };
@@ -276,6 +297,7 @@ function closeConn(pid) {
   conns.delete(pid);
   clearTimeout(c.timer);
   queued.delete(pid);
+  closePre(c);
   cancelTx(c, false, t("lostConn"));
   abortRx(c, false, t("lostConn"));
   try {
@@ -319,6 +341,8 @@ function setupDC(pid, c, dc) {
   dc.bufferedAmountLowThreshold = LOW;
   dc.onopen = () => {
     clearTimeout(c.timer);
+    c.opened = true;
+    if (c.choosing) dc.send(JSON.stringify({ t: "choosing", on: true }));
     const f = queued.get(pid);
     if (f) {
       queued.delete(pid);
@@ -429,6 +453,10 @@ function onData(c, data) {
   }
   const send = (o) => c.dc.readyState === "open" && c.dc.send(JSON.stringify(o));
   switch (m.t) {
+    case "choosing":
+      if (m.on === false) closePre(c);
+      else onChoosing(c);
+      break;
     case "offer":
       return onOffer(c, m, send);
     case "accept":
@@ -451,17 +479,41 @@ function onData(c, data) {
       }
       break;
     case "cancel":
+      closePre(c);
       cancelTx(c, false, t("canceledByPeer"));
       abortRx(c, false, t("canceledByPeer"));
       break;
   }
 }
 
+// The other device pressed "Send" and is choosing a file: show a waiting popup right away.
+function onChoosing(c) {
+  if (c.rx || c.tx || isTransferOpen()) return;
+  c.pre = openTransfer({ dir: "in", pending: true, peer: peers.get(c.pid) || { name: peerName(c.pid) } });
+  c.pre.pending(t("choosing", peerName(c.pid)));
+  c.pre.acts([[t("close"), () => closePre(c)]]);
+  c.preTimer = setTimeout(() => closePre(c), 120000); // give up if no file ever arrives
+}
+
+function closePre(c) {
+  clearTimeout(c.preTimer);
+  if (c.pre) c.pre.close();
+  c.pre = null;
+}
+
 function onOffer(c, m, send) {
-  if (c.rx || c.tx || isTransferOpen() || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
+  const waiting = c.pre; // the popup that has been waiting for this very file, if any
+  if (c.rx || c.tx || (isTransferOpen() && !waiting) || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
   const name = safeName(m.name);
   const type = String(m.type || "").slice(0, 100);
-  const ui = openTransfer({ dir: "in", name, size: m.size, type, peer: peers.get(c.pid) || { name: peerName(c.pid) }, thumb: validThumb(m.thumb) ? m.thumb : null });
+  const meta = { name, size: m.size, type, thumb: validThumb(m.thumb) ? m.thumb : null };
+  let ui;
+  if (waiting) {
+    clearTimeout(c.preTimer);
+    c.pre = null;
+    ui = waiting;
+    ui.setFile(meta);
+  } else ui = openTransfer({ dir: "in", ...meta, peer: peers.get(c.pid) || { name: peerName(c.pid) } });
   ui.info(t("acceptHint"));
   const rx = { name, size: m.size, type, ui, got: 0, w: null, pend: [], pendBytes: 0, chunks: [], accepted: false, accepting: false };
   rx.meter = mkMeter(ui, m.size);

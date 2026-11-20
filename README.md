@@ -14,9 +14,7 @@ Peer-to-peer over WebRTC. No uploads, no account, no install.
 [![Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)](docs/DEPLOYMENT.md)
 [![Donate](https://img.shields.io/badge/donate-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/vudinhviet)
 
-<img src="docs/demo-light.png" width="600" alt="FileTransfer on desktop: enter a room code, or pick a nearby device">
-&nbsp;
-<img src="docs/demo-dark.png" width="200" alt="Incoming-file popup with an image preview, dark theme on a phone">
+<img src="docs/demo.png" width="760" alt="FileTransfer: enter a room code, or pick a nearby device">
 
 </div>
 
@@ -25,7 +23,7 @@ Peer-to-peer over WebRTC. No uploads, no account, no install.
 - **Direct and encrypted.** File data goes from one browser straight to the other (WebRTC, DTLS). It never touches a server.
 - **Two ways to connect.** Devices on the same network find each other automatically, or pair across networks with a 6-digit room code or a shareable link.
 - **Know who's who.** Nearby devices show an OS icon and label, such as *iPhone · Safari*, *Windows · Chrome* or *Pixel 7 · Chrome*.
-- **A clear popup for every transfer.** The receiver sees who is sending, a preview for images (or a file-type icon), the size, then taps **Accept** or **Decline**. Progress and the result appear in the same popup, and the rest of the page stays out of the way.
+- **A clear popup for every transfer.** As soon as someone presses **Send**, the other device shows "*X is choosing a file…*". When the file is picked, the same popup shows who is sending, an image preview (or a file-type icon) and the size, with **Accept** / **Decline**. Progress and the result stay in that popup, and the rest of the page steps out of the way.
 - **Big files.** Up to 1 GB, delivered unchanged. Small files just download; on Chrome and Edge, files over 200 MB are streamed to disk so memory stays flat.
 - **Clean and light.** Zero runtime dependencies. English and Vietnamese (picked from your browser), light theme by default with a dark-mode button.
 
@@ -54,7 +52,7 @@ The web app (`public/`) is static. A single Cloudflare Worker with a Durable Obj
 
 - **File contents never reach the Worker or any server.**
 - **The Worker sees** your IP (to group devices on one network), a random id and name, your coarse device info, and the handshake messages it relays. Nothing is stored or logged; the only persisted state is a "room is active" flag that expires 10 minutes after the room empties.
-- **The receiver sees** a tiny preview (a JPEG thumbnail under 16 KB) of an image *before* accepting it, plus your device label.
+- **The receiver sees** a small preview (a JPEG thumbnail of about 15-35 KB) of an image *before* accepting it, plus your device label. They also see that you are choosing a file.
 - **Other parties see** your IP: WebRTC shows it to the device you connect to and to the STUN servers (Cloudflare and Google). The device you connect to also sees your OS and browser, for example *iPhone · Safari*.
 - **No tracking.** No analytics, cookies or third-party scripts (enforced by a strict Content Security Policy). The only thing kept in `localStorage` is your light/dark choice.
 - **Hardened.** Origin allow-list, validated inputs, best-effort rate limits, 2-device rooms, and security headers (CSP, HSTS and more).
