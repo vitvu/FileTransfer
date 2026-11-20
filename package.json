@@ -9,7 +9,7 @@
     "type": "git",
     "url": "git+https://github.com/vitvu/FileTransfer.git"
   },
-  "homepage": "https://github.com/vitvu/FileTransfer#readme",
+  "homepage": "https://file.vit.io.vn",
   "bugs": "https://github.com/vitvu/FileTransfer/issues",
   "keywords": ["webrtc", "p2p", "file-transfer", "cloudflare-workers", "snapdrop", "datachannel"],
   "engines": {

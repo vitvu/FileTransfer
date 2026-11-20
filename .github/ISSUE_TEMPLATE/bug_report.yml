@@ -1,0 +1,52 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app on device A and device B
+        2. ...
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Connection mode
+      options: [Nearby devices (same network), Room code, Both / not sure]
+    validations:
+      required: true
+  - type: input
+    id: sender
+    attributes:
+      label: Sender browser and OS
+      placeholder: Chrome 130 on Windows 11
+    validations:
+      required: true
+  - type: input
+    id: receiver
+    attributes:
+      label: Receiver browser and OS
+      placeholder: Safari 18 on iOS 18
+    validations:
+      required: true
+  - type: textarea
+    id: network
+    attributes:
+      label: Network
+      description: Same Wi-Fi? VPN, proxy, corporate or mobile network? Do not post public IP addresses.
+  - type: textarea
+    id: console
+    attributes:
+      label: Browser console output
+      description: Paste any errors (F12 → Console). Remove anything private.
+      render: text

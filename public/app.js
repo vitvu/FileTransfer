@@ -1,7 +1,7 @@
 // FileTransfer web client.
 // Files travel directly between two browsers over a WebRTC DataChannel. The signaling server
 // (a Cloudflare Worker) only relays small handshake messages and never sees file contents.
-import { t, applyStatic } from "./i18n.js";
+import { t, applyStatic, getLang, setLang } from "./i18n.js";
 
 const MAX_SIZE = 1024 ** 3; // 1 GiB
 const CHUNK = 64 * 1024; // size of each DataChannel message
@@ -28,7 +28,7 @@ function signalingBase() {
 }
 
 // ---------------- state ----------------
-let mode = "lan"; // lan | room
+let mode = "home"; // home (same-network devices) | room
 let ws = null;
 let session = 0; // bumped on every connect so events from stale sockets are ignored
 let pingTimer = 0;
@@ -41,43 +41,84 @@ const queued = new Map(); // id -> File waiting for the data channel to open
 let pickFor = null;
 
 // ---------------- UI ----------------
+let stickyUntil = 0; // an error shown by goHome() must survive the "hello" of the next connection
+let statusTimer = 0;
 function setStatus(text, err) {
   const el = $("#status");
   el.textContent = text || "";
+  el.hidden = !text;
   el.classList.toggle("err", !!err);
+  clearTimeout(statusTimer);
+  if (text && err) statusTimer = setTimeout(() => setStatus(""), 8000);
+}
+
+function showView(name) {
+  $("#view-home").hidden = name !== "home";
+  $("#view-room").hidden = name !== "room";
+}
+
+function peerCard(p) {
+  const card = document.createElement("div");
+  card.className = "peer";
+  const av = document.createElement("div");
+  av.className = "avatar";
+  av.textContent = Array.from(p.name)[0] || "?";
+  const who = document.createElement("div");
+  who.className = "who";
+  const b = document.createElement("b");
+  b.textContent = p.name;
+  const sm = document.createElement("small");
+  sm.textContent = t("drop");
+  who.append(b, sm);
+  const btn = document.createElement("button");
+  btn.className = "btn small";
+  btn.textContent = t("send");
+  btn.onclick = () => {
+    pickFor = p.id;
+    $("#file").click();
+  };
+  card.append(av, who, btn);
+  card.ondragover = (e) => (e.preventDefault(), card.classList.add("drag"));
+  card.ondragleave = () => card.classList.remove("drag");
+  card.ondrop = (e) => {
+    e.preventDefault();
+    card.classList.remove("drag");
+    const f = e.dataTransfer.files[0];
+    if (f) sendFile(p.id, f);
+  };
+  return card;
 }
 
 function renderPeers() {
-  const box = $("#peers");
-  box.replaceChildren();
-  for (const p of peers.values()) {
-    const card = document.createElement("div");
-    card.className = "peer";
-    const info = document.createElement("div");
-    const b = document.createElement("b");
-    b.textContent = p.name;
-    const s = document.createElement("span");
-    s.textContent = t("drop");
-    info.append(b, s);
-    const btn = document.createElement("button");
-    btn.className = "primary";
-    btn.textContent = t("send");
-    btn.onclick = () => {
-      pickFor = p.id;
-      $("#file").click();
-    };
-    card.append(info, btn);
-    card.ondragover = (e) => (e.preventDefault(), card.classList.add("drag"));
-    card.ondragleave = () => card.classList.remove("drag");
-    card.ondrop = (e) => {
-      e.preventDefault();
-      card.classList.remove("drag");
-      const f = e.dataTransfer.files[0];
-      if (f) sendFile(p.id, f);
-    };
-    box.append(card);
-  }
-  $("#empty").textContent = peers.size || !ws || ws.readyState !== 1 ? "" : mode === "lan" ? t("emptyLan") : t("emptyRoom");
+  const inRoom = mode === "room";
+  $("#peers").replaceChildren(...(inRoom ? [] : [...peers.values()].map(peerCard)));
+  $("#room-peers").replaceChildren(...(inRoom ? [...peers.values()].map(peerCard) : []));
+  $("#lan-steps").hidden = peers.size > 0;
+  $("#room-empty").hidden = peers.size > 0;
+}
+
+function renderMe() {
+  $("#me").textContent = me && mode === "home" ? t("youAre", me.name) : "";
+}
+
+function showRoomCode(code) {
+  $("#room-code").replaceChildren(
+    ...Array.from(code).map((c) => {
+      const d = document.createElement("span");
+      d.className = "d";
+      d.textContent = c;
+      return d;
+    })
+  );
+}
+
+// (Re)apply the current language to static markup and to the dynamic parts that render text.
+function renderStatic() {
+  applyStatic();
+  $("#lang-label").textContent = t("langSwitch");
+  digits.forEach((d, i) => d.setAttribute("aria-label", t("digitLabel", i + 1)));
+  renderPeers();
+  renderMe();
 }
 
 $("#file").onchange = (e) => {
@@ -92,6 +133,7 @@ function newTx(title) {
   el.className = "tx";
   el.innerHTML = '<div class="row"><span class="name"></span><span class="pct"></span></div><div class="bar"><i></i></div><div class="info"></div><div class="acts"></div>';
   el.querySelector(".name").textContent = title;
+  $("#transfers-wrap").hidden = false;
   $("#transfers").prepend(el);
   const q = (s) => el.querySelector(s);
   const ui = {
@@ -104,9 +146,10 @@ function newTx(title) {
     },
     acts(list) {
       q(".acts").replaceChildren(
-        ...list.map(([label, fn]) => {
+        ...list.map(([label, fn, primary]) => {
           const b = document.createElement("button");
           b.textContent = label;
+          if (primary) b.className = "primary";
           b.onclick = fn;
           return b;
         })
@@ -155,7 +198,7 @@ function resetAll() {
   peers.clear();
   me = null;
   roomCode = "";
-  $("#me").textContent = "";
+  renderMe();
   renderPeers();
 }
 
@@ -164,10 +207,8 @@ function connect(kind, code) {
   const gen = session;
   const sock = new WebSocket(`${signalingBase()}?kind=${kind}${code ? "&code=" + code : ""}`);
   ws = sock;
-  setStatus(t("connecting"));
 
   sock.onopen = () => {
-    setStatus("");
     pingTimer = setInterval(() => sock.readyState === 1 && sock.send("ping"), 30000);
   };
   sock.onmessage = (e) => {
@@ -198,16 +239,13 @@ function onWsClosed(code) {
       setStatus(t("roomExpired"));
       return connect("create");
     }
-    resetAll();
-    showChooser();
-    setStatus(code === 4404 ? t("noRoom") : code === 4423 ? t("roomFull") : t("busy"), true);
-    return;
+    return goHome(code === 4404 ? t("noRoom") : code === 4423 ? t("roomFull") : t("busy"), true);
   }
   setStatus(t("retrying"), true);
   const gen = session;
   setTimeout(() => {
     if (gen !== session) return;
-    if (mode === "lan") connect("lan");
+    if (mode === "home") connect("lan");
     else connect(roomCode ? "join" : "create", roomCode);
   }, 2000);
 }
@@ -221,14 +259,12 @@ function onSignal(m) {
     me = { id: m.id, name: m.name };
     peers.clear();
     m.peers.forEach((p) => peers.set(p.id, p));
-    $("#me").textContent = t("youAre", m.name);
     if (m.code) {
       roomCode = m.code;
-      $("#room-code").textContent = m.code;
-      $("#room-choose").hidden = true;
-      $("#room-info").hidden = false;
+      showRoomCode(m.code);
     }
-    setStatus("");
+    if (Date.now() > stickyUntil) setStatus("");
+    renderMe();
     renderPeers();
   } else if (m.t === "join") {
     peers.set(m.peer.id, m.peer);
@@ -462,7 +498,7 @@ function onOffer(c, m, send) {
   rx.meter = mkMeter(ui, m.size);
   c.rx = rx;
   ui.acts([
-    [t("accept"), () => acceptRx(c, rx, send)],
+    [t("accept"), () => acceptRx(c, rx, send), true],
     [
       t("reject"),
       () => {
@@ -554,43 +590,91 @@ function abortRx(c, notify, msg) {
   rx.ui.end("fail", msg);
 }
 
-// ---------------- modes / tabs ----------------
-function showChooser() {
-  $("#room-choose").hidden = false;
-  $("#room-info").hidden = true;
+// ---------------- views, room code input, language ----------------
+const digits = [...document.querySelectorAll("#digits input")];
+const clearDigits = () => digits.forEach((d) => (d.value = ""));
+
+function startHome() {
+  mode = "home";
+  resetAll();
+  showView("home");
+  connect("lan");
 }
 
-function setMode(m) {
-  mode = m;
-  $("#tab-lan").classList.toggle("on", m === "lan");
-  $("#tab-room").classList.toggle("on", m === "room");
-  $("#panel-room").hidden = m !== "room";
-  resetAll();
-  setStatus("");
-  if (m === "lan") connect("lan");
-  else showChooser();
+function goHome(msg, isErr) {
+  startHome();
+  clearDigits();
+  if (msg) {
+    stickyUntil = Date.now() + 6000;
+    setStatus(msg, isErr);
+  }
+  if (isErr) {
+    const box = $("#digits");
+    box.classList.add("shake");
+    setTimeout(() => box.classList.remove("shake"), 400);
+  }
 }
 
-$("#tab-lan").onclick = () => mode !== "lan" && setMode("lan");
-$("#tab-room").onclick = () => mode !== "room" && setMode("room");
-$("#btn-create").onclick = () => {
-  isCreator = true;
-  roomCode = "";
-  connect("create");
-};
-$("#join-form").onsubmit = (e) => {
-  e.preventDefault();
-  const code = $("#code-in").value.trim();
-  if (!/^\d{6}$/.test(code)) return setStatus(t("code6"), true);
-  isCreator = false;
-  roomCode = code;
-  connect("join", code);
-};
-$("#btn-leave").onclick = (e) => {
-  e.preventDefault();
+function enterRoom(kind, code) {
+  mode = "room";
   resetAll();
-  showChooser();
+  showView("room");
+  isCreator = kind === "create";
+  roomCode = code || "";
+  showRoomCode(code || "••••••");
+  renderPeers();
+  connect(kind, code);
+}
+
+function submitCode() {
+  const code = digits.map((d) => d.value).join("");
+  if (/^\d{6}$/.test(code)) enterRoom("join", code);
+}
+
+digits.forEach((inp, i) => {
+  inp.addEventListener("input", () => {
+    inp.value = inp.value.replace(/\D/g, "").slice(-1);
+    if (inp.value && i < 5) digits[i + 1].focus();
+    if (digits.every((d) => d.value)) submitCode();
+  });
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Backspace" && !inp.value && i > 0) {
+      digits[i - 1].value = "";
+      digits[i - 1].focus();
+    } else if (e.key === "ArrowLeft" && i > 0) digits[i - 1].focus();
+    else if (e.key === "ArrowRight" && i < 5) digits[i + 1].focus();
+  });
+  inp.addEventListener("paste", (e) => {
+    const text = (e.clipboardData.getData("text") || "").replace(/\D/g, "").slice(0, 6);
+    if (!text) return;
+    e.preventDefault();
+    [...text].forEach((c, k) => (digits[k].value = c));
+    digits[Math.min(text.length, 5)].focus();
+    if (text.length === 6) submitCode();
+  });
+});
+
+$("#btn-create").onclick = () => enterRoom("create");
+$("#btn-leave").onclick = () => startHome();
+
+async function copy(text, btn) {
+  try {
+    await navigator.clipboard.writeText(text);
+    btn.textContent = t("copied");
+    setTimeout(() => (btn.textContent = t(btn.dataset.i18n)), 1500);
+  } catch {}
+}
+$("#btn-copy").onclick = (e) => roomCode && copy(roomCode, e.currentTarget);
+$("#btn-copylink").onclick = (e) => roomCode && copy(`${location.origin}${location.pathname}#${roomCode}`, e.currentTarget);
+
+$("#lang").onclick = () => {
+  setLang(getLang() === "vi" ? "en" : "vi");
+  renderStatic();
 };
 
-applyStatic();
-setMode("lan");
+renderStatic();
+const hash = location.hash.match(/^#(\d{6})$/);
+if (hash) {
+  history.replaceState(null, "", location.pathname + location.search); // keep the code out of the address bar / history
+  enterRoom("join", hash[1]);
+} else startHome();

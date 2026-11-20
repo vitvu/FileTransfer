@@ -5,44 +5,105 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' wss: ws:; img-src 'self' data:; base-uri 'none'; form-action 'none'">
-  <title>FileTransfer · P2P file sharing</title>
-  <meta name="description" content="Send files directly between devices in your browser. Peer-to-peer over WebRTC, no uploads, no account.">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 16h14m0 0l-5-5m5 5l-5 5' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <title>FileTransfer · Send files device to device</title>
+  <meta name="description" content="Send files directly between devices in your browser. Peer-to-peer over WebRTC: no uploads, no account, no install.">
+  <meta name="theme-color" content="#007aff">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="FileTransfer · Send files device to device">
+  <meta property="og:description" content="Send files directly between devices in your browser. No uploads, no account, no install.">
+  <meta property="og:url" content="https://file.vit.io.vn/">
+  <meta property="og:image" content="https://file.vit.io.vn/social.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<header class="topbar">
+  <a class="brand" href="./" aria-label="FileTransfer">
+    <img src="favicon.svg" alt="" width="34" height="34">
+    <span>FileTransfer</span>
+  </a>
+  <button id="lang" class="chip" type="button">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+    <span id="lang-label">Tiếng Việt</span>
+  </button>
+</header>
+
 <main>
-  <h1>FileTransfer <small data-i18n="subtitle"></small></h1>
+  <p id="status" class="status" role="status" hidden></p>
 
-  <nav class="tabs">
-    <button id="tab-lan" class="on" data-i18n="tabLan"></button>
-    <button id="tab-room" data-i18n="tabRoom"></button>
-  </nav>
+  <!-- HOME: enter a code (left) + same-network devices (right) -->
+  <section id="view-home">
+    <div class="hero">
+      <span class="badge"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span data-i18n="badge"></span></span>
+      <h1><span data-i18n="heroA"></span><br><span class="accent" data-i18n="heroB"></span></h1>
+      <p class="lead" data-i18n="lead"></p>
+    </div>
 
-  <section id="panel-room" hidden>
-    <div id="room-choose">
-      <button id="btn-create" class="primary" data-i18n="create"></button>
-      <span class="or" data-i18n="or"></span>
-      <form id="join-form">
-        <input id="code-in" inputmode="numeric" maxlength="6" data-i18n-ph="codePh" autocomplete="off">
-        <button data-i18n="join"></button>
-      </form>
-      <p class="hint" data-i18n="roomHint"></p>
+    <div class="cards">
+      <article class="card" id="card-code">
+        <div class="ico solid"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h14M5 15h14M10 3 8 21M16 3l-2 18"/></svg></div>
+        <h2 data-i18n="codeTitle"></h2>
+        <p class="muted" data-i18n="codeDesc"></p>
+        <div class="digits" id="digits">
+          <input inputmode="numeric" maxlength="1" autocomplete="off">
+          <input inputmode="numeric" maxlength="1" autocomplete="off">
+          <input inputmode="numeric" maxlength="1" autocomplete="off">
+          <input inputmode="numeric" maxlength="1" autocomplete="off">
+          <input inputmode="numeric" maxlength="1" autocomplete="off">
+          <input inputmode="numeric" maxlength="1" autocomplete="off">
+        </div>
+        <div class="divider"><span data-i18n="or"></span></div>
+        <button id="btn-create" class="btn" type="button">
+          <span data-i18n="create"></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </article>
+
+      <article class="card" id="card-lan">
+        <div class="ico"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 9a15 15 0 0 1 20 0M5.5 12.5a10 10 0 0 1 13 0M9 16a5 5 0 0 1 6 0"/><circle cx="12" cy="19.5" r="1" fill="currentColor"/></svg></div>
+        <h2 data-i18n="lanTitle"></h2>
+        <p class="muted" data-i18n="lanDesc"></p>
+        <div id="peers" class="peers"></div>
+        <ol id="lan-steps" class="steps">
+          <li data-i18n="lanStep1"></li>
+          <li data-i18n="lanStep2"></li>
+          <li data-i18n="lanStep3"></li>
+        </ol>
+        <p id="me" class="me"></p>
+      </article>
     </div>
-    <div id="room-info" hidden>
-      <div class="code" id="room-code">------</div>
-      <p class="hint"><span data-i18n="codeHint"></span> <a href="#" id="btn-leave" data-i18n="leave"></a></p>
-    </div>
+
+    <ul class="features">
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span data-i18n="f1"></span></li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg><span data-i18n="f2"></span></li>
+      <li><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2M9 2h6"/></svg><span data-i18n="f3"></span></li>
+    </ul>
   </section>
 
-  <p id="status" class="status"></p>
-  <p id="me" class="hint"></p>
+  <!-- ROOM: code to share + the other device -->
+  <section id="view-room" hidden>
+    <article class="card room">
+      <div class="room-head">
+        <span class="badge"><span data-i18n="roomBadge"></span></span>
+        <button id="btn-leave" class="btn ghost small" type="button" data-i18n="leave"></button>
+      </div>
+      <h2 data-i18n="roomTitle"></h2>
+      <p class="muted" data-i18n="roomDesc"></p>
+      <div class="digits static" id="room-code" aria-live="polite"></div>
+      <div class="actions">
+        <button id="btn-copy" class="btn soft small" type="button" data-i18n="copyCode"></button>
+        <button id="btn-copylink" class="btn soft small" type="button" data-i18n="copyLink"></button>
+      </div>
+      <div id="room-peers" class="peers"></div>
+      <p id="room-empty" class="waiting" data-i18n="emptyRoom"></p>
+    </article>
+  </section>
 
-  <section id="peers" class="peers"></section>
-  <p id="empty" class="hint"></p>
-
-  <h2 data-i18n="transfers"></h2>
-  <section id="transfers"></section>
+  <section id="transfers-wrap" hidden>
+    <h3 class="section-title" data-i18n="transfers"></h3>
+    <div id="transfers"></div>
+  </section>
 
   <footer>
     <span data-i18n="footer"></span>

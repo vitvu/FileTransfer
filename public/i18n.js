@@ -1,22 +1,43 @@
-// Tiny i18n: English (default) and Vietnamese, chosen from the browser language.
+// Tiny i18n: English and Vietnamese. The language follows the browser (navigator.languages) and
+// can be switched with the button in the header. Nothing is persisted (no cookies / localStorage).
 const en = {
-  subtitle: "P2P · up to 1 GB · never uploaded to a server",
-  tabLan: "Nearby devices",
-  tabRoom: "Room code",
-  create: "Create room",
+  htmlTitle: "FileTransfer · Send files device to device",
+  badge: "No sign-up · No upload",
+  heroA: "Send files,",
+  heroB: "device to device.",
+  lead: "Files go straight from one browser to another, encrypted. Up to 1 GB, no account, and nothing is stored on a server.",
+
+  codeTitle: "Enter a room code",
+  codeDesc: "Type the 6-digit code the other person gave you. Or create a room and share your own code.",
+  digitLabel: (n) => `Digit ${n} of 6`,
   or: "or",
-  codePh: "6-digit code",
-  join: "Join room",
-  roomHint: "A room closes after 10 minutes with nobody online. Max 2 devices per room.",
-  codeHint: "Share this code with the other device.",
+  create: "Create a room",
+
+  lanTitle: "Same Wi-Fi / LAN",
+  lanDesc: "Devices on your network show up here automatically.",
+  lanStep1: "Open this page on both devices, on the same Wi-Fi or network.",
+  lanStep2: "The other device appears in this card.",
+  lanStep3: "Pick it, choose a file, and the other side taps Accept.",
+
+  f1: "Direct and encrypted, never uploaded",
+  f2: "Up to 1 GB, delivered unchanged",
+  f3: "Rooms close after 10 min empty",
+
+  roomBadge: "Room",
+  roomTitle: "Share this code",
+  roomDesc: "The other device enters it on the home page, or opens the link below.",
+  copyCode: "Copy code",
+  copyLink: "Copy link",
+  copied: "Copied",
   leave: "Leave room",
+  emptyRoom: "Waiting for the other device to join…",
+  emptyLan: "No other device yet",
+
   transfers: "Transfers",
   footer: "Files travel directly between devices (WebRTC, encrypted). The server never sees them.",
-  drop: "Drop a file here or press Send",
+  drop: "Drop a file here, or press Send",
   send: "Send file",
-  emptyLan: "No devices found yet. Open this page on another device that is on the same Wi-Fi / LAN.",
-  emptyRoom: "Waiting for the other device to enter the code…",
-  youAre: (n) => `You are: ${n}`,
+  youAre: (n) => `You appear as ${n}`,
   connecting: "Connecting…",
   connectingTo: (n) => `Connecting to ${n}…`,
   tooBig: (f) => `"${f}" is larger than 1 GB and cannot be sent.`,
@@ -46,29 +67,49 @@ const en = {
   roomFull: "That room already has 2 devices.",
   busy: "The server is busy, try again later.",
   retrying: "Lost connection to the server, retrying…",
-  code6: "A room code is exactly 6 digits.",
   p2pFail: "Could not connect directly (your network blocks peer-to-peer).",
   p2pTimeout: "Timed out while connecting to the other device.",
+  langSwitch: "Tiếng Việt",
 };
 
 const vi = {
-  subtitle: "P2P · tối đa 1 GB · không qua server",
-  tabLan: "Thiết bị gần đây",
-  tabRoom: "Mã phòng",
-  create: "Tạo phòng mới",
+  htmlTitle: "FileTransfer · Gửi file giữa các thiết bị",
+  badge: "Không cần đăng ký · Không upload",
+  heroA: "Gửi file nhanh,",
+  heroB: "trực tiếp giữa các máy.",
+  lead: "File đi thẳng từ trình duyệt này sang trình duyệt kia, được mã hóa. Tối đa 1 GB, không cần tài khoản, không lưu gì trên máy chủ.",
+
+  codeTitle: "Nhập mã phòng",
+  codeDesc: "Nhập mã 6 số mà người kia gửi cho bạn. Hoặc tạo phòng mới và gửi mã của bạn cho họ.",
+  digitLabel: (n) => `Chữ số ${n} trên 6`,
   or: "hoặc",
-  codePh: "Mã 6 số",
-  join: "Vào phòng",
-  roomHint: "Phòng tự đóng sau 10 phút không có ai online. Tối đa 2 thiết bị mỗi phòng.",
-  codeHint: "Gửi mã này cho thiết bị kia.",
+  create: "Tạo phòng mới",
+
+  lanTitle: "Cùng Wi-Fi / mạng LAN",
+  lanDesc: "Các thiết bị trong cùng mạng sẽ tự hiện ở đây.",
+  lanStep1: "Mở trang này trên cả hai thiết bị, cùng một mạng Wi-Fi hoặc LAN.",
+  lanStep2: "Thiết bị kia sẽ tự xuất hiện trong thẻ này.",
+  lanStep3: "Chọn thiết bị, chọn file, bên kia bấm Nhận là xong.",
+
+  f1: "Truyền trực tiếp, mã hóa, không upload",
+  f2: "Tối đa 1 GB, file giữ nguyên",
+  f3: "Phòng tự đóng sau 10 phút không ai",
+
+  roomBadge: "Phòng",
+  roomTitle: "Gửi mã này cho người kia",
+  roomDesc: "Họ nhập mã ở trang chủ, hoặc mở đường link bên dưới.",
+  copyCode: "Sao chép mã",
+  copyLink: "Sao chép link",
+  copied: "Đã chép",
   leave: "Rời phòng",
+  emptyRoom: "Đang chờ thiết bị kia vào phòng…",
+  emptyLan: "Chưa có thiết bị khác",
+
   transfers: "Truyền file",
   footer: "File đi thẳng giữa hai thiết bị (WebRTC, được mã hóa). Máy chủ không thấy file.",
-  drop: "Kéo thả file vào đây hoặc bấm Gửi",
+  drop: "Kéo thả file vào đây, hoặc bấm Gửi",
   send: "Gửi file",
-  emptyLan: "Chưa thấy thiết bị nào. Mở trang này trên thiết bị khác đang dùng chung Wi-Fi / LAN.",
-  emptyRoom: "Đang chờ thiết bị kia nhập mã…",
-  youAre: (n) => `Bạn là: ${n}`,
+  youAre: (n) => `Bạn hiện là ${n}`,
   connecting: "Đang kết nối…",
   connectingTo: (n) => `Đang kết nối tới ${n}…`,
   tooBig: (f) => `"${f}" lớn hơn 1 GB, không gửi được.`,
@@ -98,21 +139,30 @@ const vi = {
   roomFull: "Phòng đã đủ 2 thiết bị.",
   busy: "Máy chủ đang bận, thử lại sau.",
   retrying: "Mất kết nối máy chủ, đang thử lại…",
-  code6: "Mã phòng gồm đúng 6 chữ số.",
   p2pFail: "Không kết nối trực tiếp được (mạng chặn P2P).",
   p2pTimeout: "Hết thời gian chờ kết nối với thiết bị kia.",
+  langSwitch: "English",
 };
 
-const dict = (navigator.language || "en").toLowerCase().startsWith("vi") ? vi : en;
-document.documentElement.lang = dict === vi ? "vi" : "en";
+const dicts = { en, vi };
+const detect = () => ((navigator.languages && navigator.languages[0]) || navigator.language || "en").toLowerCase().startsWith("vi") ? "vi" : "en";
+let lang = detect();
+
+export const getLang = () => lang;
+export function setLang(l) {
+  lang = l === "vi" ? "vi" : "en";
+}
 
 export function t(key, ...args) {
-  const v = dict[key] ?? en[key] ?? key;
+  const v = dicts[lang][key] ?? en[key] ?? key;
   return typeof v === "function" ? v(...args) : v;
 }
 
-// Translate static markup: data-i18n="key" (text) and data-i18n-ph="key" (placeholder).
+// Translate static markup: data-i18n="key" (text), data-i18n-ph (placeholder), data-i18n-label (aria-label).
 export function applyStatic() {
+  document.documentElement.lang = lang;
+  document.title = t("htmlTitle");
   document.querySelectorAll("[data-i18n]").forEach((el) => (el.textContent = t(el.dataset.i18n)));
   document.querySelectorAll("[data-i18n-ph]").forEach((el) => (el.placeholder = t(el.dataset.i18nPh)));
+  document.querySelectorAll("[data-i18n-label]").forEach((el) => el.setAttribute("aria-label", t(el.dataset.i18nLabel)));
 }
