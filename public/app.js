@@ -2,6 +2,7 @@
 // Files travel directly between two browsers over a WebRTC DataChannel. The signaling server
 // (a Cloudflare Worker) only relays small handshake messages and never sees file contents.
 import { t, applyStatic, getLang, setLang } from "./i18n.js";
+import { describeDevice, deviceParams, deviceLabel, deviceIcon } from "./device.js";
 
 const MAX_SIZE = 1024 ** 3; // 1 GiB
 const CHUNK = 64 * 1024; // size of each DataChannel message
@@ -35,7 +36,8 @@ let pingTimer = 0;
 let me = null;
 let roomCode = "";
 let isCreator = false;
-const peers = new Map(); // id -> {id, name}
+const myDev = await describeDevice(); // coarse OS / browser info shown to the devices we connect to
+const peers = new Map(); // id -> {id, name, dev}
 const conns = new Map(); // id -> connection
 const queued = new Map(); // id -> File waiting for the data channel to open
 let pickFor = null;
@@ -62,14 +64,14 @@ function peerCard(p) {
   card.className = "peer";
   const av = document.createElement("div");
   av.className = "avatar";
-  av.textContent = Array.from(p.name)[0] || "?";
+  av.innerHTML = deviceIcon(p.dev); // constant SVG markup chosen from a fixed set, never network data
   const who = document.createElement("div");
   who.className = "who";
   const b = document.createElement("b");
   b.textContent = p.name;
-  const sm = document.createElement("small");
-  sm.textContent = t("drop");
-  who.append(b, sm);
+  const dev = document.createElement("small");
+  dev.textContent = deviceLabel(p.dev);
+  who.append(b, dev);
   const btn = document.createElement("button");
   btn.className = "btn small";
   btn.textContent = t("send");
@@ -98,7 +100,7 @@ function renderPeers() {
 }
 
 function renderMe() {
-  $("#me").textContent = me && mode === "home" ? t("youAre", me.name) : "";
+  $("#me").textContent = me && mode === "home" ? t("youAre", `${me.name} (${deviceLabel(myDev)})`) : "";
 }
 
 function showRoomCode(code) {
@@ -205,7 +207,7 @@ function resetAll() {
 function connect(kind, code) {
   closeWS();
   const gen = session;
-  const sock = new WebSocket(`${signalingBase()}?kind=${kind}${code ? "&code=" + code : ""}`);
+  const sock = new WebSocket(`${signalingBase()}?kind=${kind}${code ? "&code=" + code : ""}${deviceParams(myDev)}`);
   ws = sock;
 
   sock.onopen = () => {
@@ -666,6 +668,14 @@ async function copy(text, btn) {
 }
 $("#btn-copy").onclick = (e) => roomCode && copy(roomCode, e.currentTarget);
 $("#btn-copylink").onclick = (e) => roomCode && copy(`${location.origin}${location.pathname}#${roomCode}`, e.currentTarget);
+
+$("#theme").onclick = () => {
+  const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try {
+    localStorage.setItem("ft-theme", next);
+  } catch {}
+};
 
 $("#lang").onclick = () => {
   setLang(getLang() === "vi" ? "en" : "vi");

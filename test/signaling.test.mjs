@@ -50,6 +50,20 @@ b.close();
 ok((await a.next("leave")).id === hb.id, "LAN: A is told that B left");
 a.close();
 
+// --- Device info is shared with peers, and sanitized by the server
+const d1 = await open("kind=lan&os=ios&type=phone&br=safari&model=");
+await d1.next("hello");
+const d2 = await open("kind=lan&os=%3Cscript%3E&type=x&br=evil&model=" + encodeURIComponent("Pixel 7 <b>x</b>" + "y".repeat(40)));
+const hd2 = await d2.next("hello");
+const seen = hd2.peers.find((p) => p.dev && p.dev.os === "ios");
+ok(seen && seen.dev.type === "phone" && seen.dev.browser === "safari", "Device: peer's iOS / phone / Safari info is relayed");
+const joined = (await d1.next("join")).peer.dev;
+ok(joined.os === "other" && joined.type === "desktop" && joined.browser === "other", "Device: unknown os/type/browser values fall back to safe defaults");
+ok(!/[<>]/.test(joined.model) && joined.model.length <= 24, `Device: model string is sanitized and capped (${JSON.stringify(joined.model)})`);
+d1.close();
+d2.close();
+await sleep(200);
+
 // --- Code rooms
 const c = await open("kind=create");
 const hc = await c.next("hello");

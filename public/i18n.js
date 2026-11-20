@@ -71,6 +71,7 @@ const en = {
   p2pFail: "Could not connect directly (your network blocks peer-to-peer).",
   p2pTimeout: "Timed out while connecting to the other device.",
   langSwitch: "Tiếng Việt",
+  themeToggle: "Switch light / dark theme",
   donate: "Support the project",
 };
 
@@ -145,6 +146,7 @@ const vi = {
   p2pFail: "Không kết nối trực tiếp được (mạng chặn P2P).",
   p2pTimeout: "Hết thời gian chờ kết nối với thiết bị kia.",
   langSwitch: "English",
+  themeToggle: "Đổi giao diện sáng / tối",
   donate: "Ủng hộ dự án",
 };
 

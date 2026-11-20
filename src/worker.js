@@ -35,6 +35,25 @@ function originAllowed(origin, url, env) {
   }
 }
 
+// Coarse device info (OS, form factor, browser, model) shown to the other peer, e.g. "iPhone · Safari".
+// Everything is validated here: only whitelisted values or a short sanitized model string get through.
+const DEV_OS = new Set(["ios", "android", "windows", "mac", "linux", "chromeos", "other"]);
+const DEV_TYPE = new Set(["phone", "tablet", "desktop"]);
+const DEV_BROWSER = new Set(["chrome", "safari", "firefox", "edge", "opera", "samsung", "other"]);
+const DEV_KEYS = ["os", "type", "br", "model"];
+
+function parseDevice(p) {
+  const os = p.get("os");
+  const type = p.get("type");
+  const br = p.get("br");
+  return {
+    os: DEV_OS.has(os) ? os : "other",
+    type: DEV_TYPE.has(type) ? type : "desktop",
+    browser: DEV_BROWSER.has(br) ? br : "other",
+    model: String(p.get("model") || "").replace(/[^\w .+()-]/g, "").trim().slice(0, 24),
+  };
+}
+
 function randomCode() {
   const n = crypto.getRandomValues(new Uint32Array(1))[0] % 1_000_000;
   return String(n).padStart(6, "0");
@@ -79,7 +98,9 @@ export default {
 
     const forward = (name, params) => {
       const u = new URL(request.url);
-      u.search = new URLSearchParams(params).toString();
+      const q = new URLSearchParams(params);
+      for (const k of DEV_KEYS) if (url.searchParams.has(k)) q.set(k, url.searchParams.get(k));
+      u.search = q.toString();
       return env.ROOMS.get(env.ROOMS.idFromName(name)).fetch(new Request(u, request));
     };
 
@@ -138,7 +159,7 @@ export class Room extends DurableObject {
     if (peers.length >= (isRoom ? ROOM_MAX : LAN_MAX)) return refuse(4423, "full");
 
     const [client, server] = Object.values(new WebSocketPair());
-    const me = { id: crypto.randomUUID().slice(0, 8), name: `${pick(COLORS)} ${pick(ANIMALS)}`, room: isRoom };
+    const me = { id: crypto.randomUUID().slice(0, 8), name: `${pick(COLORS)} ${pick(ANIMALS)}`, room: isRoom, dev: parseDevice(p) };
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(me);
     if (isRoom) await this.ctx.storage.deleteAlarm();
@@ -151,11 +172,11 @@ export class Room extends DurableObject {
         code: p.get("code") || undefined,
         peers: peers.map((s) => {
           const a = s.deserializeAttachment();
-          return { id: a.id, name: a.name };
+          return { id: a.id, name: a.name, dev: a.dev };
         }),
       })
     );
-    const joinMsg = JSON.stringify({ t: "join", peer: { id: me.id, name: me.name } });
+    const joinMsg = JSON.stringify({ t: "join", peer: { id: me.id, name: me.name, dev: me.dev } });
     for (const s of peers) s.send(joinMsg);
 
     return new Response(null, { status: 101, webSocket: client });
