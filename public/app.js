@@ -228,9 +228,9 @@ function connect(kind, code) {
   };
 }
 
-// Application close codes sent by the server: 4404 no such room, 4423 room full, 4500 busy.
+// Application close codes sent by the server: 4404 no such room, 4423 room full, 4429 rate limited, 4500 busy.
 function onWsClosed(code) {
-  if (mode === "room" && (code === 4404 || code === 4423 || code === 4500)) {
+  if (mode === "room" && (code === 4404 || code === 4423 || code === 4429 || code === 4500)) {
     if (code === 4404 && isCreator && roomCode) {
       // Our own room expired (10 minutes with nobody online): transparently open a new one.
       roomCode = "";
@@ -239,15 +239,15 @@ function onWsClosed(code) {
       setStatus(t("roomExpired"));
       return connect("create");
     }
-    return goHome(code === 4404 ? t("noRoom") : code === 4423 ? t("roomFull") : t("busy"), true);
+    return goHome(code === 4404 ? t("noRoom") : code === 4423 ? t("roomFull") : code === 4429 ? t("rateLimited") : t("busy"), true);
   }
-  setStatus(t("retrying"), true);
+  setStatus(code === 4429 ? t("rateLimited") : t("retrying"), true);
   const gen = session;
   setTimeout(() => {
     if (gen !== session) return;
     if (mode === "home") connect("lan");
     else connect(roomCode ? "join" : "create", roomCode);
-  }, 2000);
+  }, code === 4429 ? 15000 : 2000); // back off when rate limited
 }
 
 function sig(to, data) {

@@ -67,9 +67,11 @@ const en = {
   roomFull: "That room already has 2 devices.",
   busy: "The server is busy, try again later.",
   retrying: "Lost connection to the server, retrying…",
+  rateLimited: "Too many attempts. Please wait a minute and try again.",
   p2pFail: "Could not connect directly (your network blocks peer-to-peer).",
   p2pTimeout: "Timed out while connecting to the other device.",
   langSwitch: "Tiếng Việt",
+  donate: "Support the project",
 };
 
 const vi = {
@@ -139,9 +141,11 @@ const vi = {
   roomFull: "Phòng đã đủ 2 thiết bị.",
   busy: "Máy chủ đang bận, thử lại sau.",
   retrying: "Mất kết nối máy chủ, đang thử lại…",
+  rateLimited: "Bạn thử quá nhiều lần. Vui lòng đợi một phút rồi thử lại.",
   p2pFail: "Không kết nối trực tiếp được (mạng chặn P2P).",
   p2pTimeout: "Hết thời gian chờ kết nối với thiết bị kia.",
   langSwitch: "English",
+  donate: "Ủng hộ dự án",
 };
 
 const dicts = { en, vi };

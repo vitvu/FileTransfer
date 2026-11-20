@@ -7,12 +7,13 @@
 **Send files directly between devices, right in the browser.**<br>
 Peer-to-peer over WebRTC. No uploads, no account, no install.
 
-[**Open the app → file.vit.io.vn**](https://file.vit.io.vn)
+### [🚀 Live demo → file.vit.io.vn](https://file.vit.io.vn)
 
 [![CI](https://github.com/vitvu/FileTransfer/actions/workflows/ci.yml/badge.svg)](https://github.com/vitvu/FileTransfer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Runs on Cloudflare Workers](https://img.shields.io/badge/runs%20on-Cloudflare%20Workers-F38020?logo=cloudflare&logoColor=white)
 ![Dependencies: 0](https://img.shields.io/badge/runtime%20dependencies-0-brightgreen)
+[![Donate](https://img.shields.io/badge/donate-PayPal-00457C?logo=paypal&logoColor=white)](https://paypal.me/vudinhviet)
 
 <br>
 
@@ -48,7 +49,7 @@ The home page has two cards:
 
 ## Table of contents
 
-[How it works](#how-it-works) · [Run locally](#run-locally) · [Deploy your own](#deploy-your-own) · [Configuration](#configuration) · [Privacy and security](#privacy-and-security) · [Browser support](#browser-support) · [Limitations](#limitations) · [Project structure](#project-structure) · [Contributing](#contributing)
+[Using it](#using-it) · [How it works](#how-it-works) · [Run locally](#run-locally) · [Deploy your own](#deploy-your-own) · [Configuration](#configuration) · [Privacy and security](#privacy-and-security) · [Browser support](#browser-support) · [Limitations](#limitations) · [Project structure](#project-structure) · [Support](#support) · [Contributing](#contributing)
 
 ## How it works
 
@@ -151,6 +152,8 @@ The static files in `public/` work on any host (Cloudflare Pages, GitHub Pages, 
 | `ICE` | `public/app.js` | STUN and TURN servers. |
 | Translations | `public/i18n.js` | English and Vietnamese strings. Add a language by adding a dictionary. |
 | `ROOM_IDLE_MS`, `ROOM_MAX`, `LAN_MAX` | `src/worker.js` | Room expiry (10 min), room size (2), LAN group size (20). |
+| `JOIN_LIMITER`, `WS_LIMITER` | `wrangler.toml` | Best-effort rate limits per client IP for room joins (10/min) and all other connections (60/min). |
+| Security headers | `public/_headers` | CSP, HSTS and friends for the static site. |
 
 ## Privacy and security
 
@@ -159,7 +162,9 @@ The static files in `public/` work on any host (Cloudflare Pages, GitHub Pages, 
 - **What others see:** WebRTC inherently shows your IP address to the device you connect to and to the STUN servers used for discovery (Cloudflare and Google by default).
 - **No tracking.** No analytics, cookies, `localStorage` or third-party scripts. A strict Content Security Policy (`script-src 'self'`) enforces this in the browser.
 - **Hardened inputs.** Origin allow-list, 16 KB signaling message limit, 2-device rooms, and all peer-supplied text rendered with `textContent`.
-- **Room codes are not secrets.** A 6-digit code is a convenience, not authentication. The receiver must approve every file and rooms expire quickly, but do not rely on the code to protect sensitive data. Add a Cloudflare WAF rate-limiting rule for `/ws` to make guessing impractical.
+- **Rate limited (best effort).** The Worker applies Cloudflare's Rate Limiting binding per client IP: 10 room joins and 60 signaling connections per minute. This binding is approximate and per location, so treat it as a speed bump, not a hard cap. Guessing a code is already a long shot (1 in a million per attempt, and rooms live only minutes). For a hard guarantee add a [WAF rate limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) on `/ws`.
+- **Security headers.** The static site is served with a strict `Content-Security-Policy` (including `frame-ancestors 'none'`), HSTS, `X-Content-Type-Options`, `Referrer-Policy` and a restrictive `Permissions-Policy` (see [`public/_headers`](public/_headers)).
+- **Room codes are not secrets.** A 6-digit code is a convenience, not authentication. The receiver must approve every file and rooms expire quickly, but do not rely on the code to protect sensitive data.
 
 Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
 
@@ -196,6 +201,14 @@ Found a vulnerability? Please follow [SECURITY.md](SECURITY.md).
 ├── wrangler.dev.toml       Local development (UI + Worker on one origin)
 └── .github/                CI, deploy workflow, issue and PR templates
 ```
+
+## Support
+
+FileTransfer is free, open source and ad-free. If it saved you some time, you can help cover the hosting and development time:
+
+[![Donate with PayPal](https://img.shields.io/badge/Donate-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://paypal.me/vudinhviet)
+
+Starring the repository and sharing the app with a friend help just as much.
 
 ## Contributing
 

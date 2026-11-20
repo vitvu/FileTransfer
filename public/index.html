@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' wss: ws:; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' wss: ws://localhost:* ws://127.0.0.1:*; img-src 'self' data:; base-uri 'none'; form-action 'none'">
   <title>FileTransfer · Send files device to device</title>
   <meta name="description" content="Send files directly between devices in your browser. Peer-to-peer over WebRTC: no uploads, no account, no install.">
   <meta name="theme-color" content="#007aff">
@@ -107,7 +107,10 @@
 
   <footer>
     <span data-i18n="footer"></span>
-    <a href="https://github.com/vitvu/FileTransfer" target="_blank" rel="noopener noreferrer">GitHub</a>
+    <span class="links">
+      <a class="donate" href="https://paypal.me/vudinhviet" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8l1 1.1L12 21l7.8-7.5 1-1.1a5.5 5.5 0 0 0 0-7.8z"/></svg><span data-i18n="donate"></span></a>
+      <a href="https://github.com/vitvu/FileTransfer" target="_blank" rel="noopener noreferrer">GitHub</a>
+    </span>
   </footer>
 </main>
 <input type="file" id="file" hidden>

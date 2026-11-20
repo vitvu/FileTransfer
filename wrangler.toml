@@ -18,6 +18,22 @@ run_worker_first = ["/ws"]
 [vars]
 ALLOWED_ORIGINS = "https://file.vit.io.vn"
 
+# Rate limits per client IP (per Cloudflare location). Over the limit the socket is closed with code 4429.
+# JOIN_LIMITER guards the 6-digit room codes against guessing; WS_LIMITER covers everything else.
+[[ratelimits]]
+name = "JOIN_LIMITER"
+namespace_id = "1001"
+  [ratelimits.simple]
+  limit = 10
+  period = 60
+
+[[ratelimits]]
+name = "WS_LIMITER"
+namespace_id = "1002"
+  [ratelimits.simple]
+  limit = 60
+  period = 60
+
 # Do not retain request logs for this Worker.
 [observability]
 enabled = false

@@ -14,4 +14,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Home page with a 6-box room-code entry next to same-network discovery, plus step-by-step hints.
 - Shareable room links (`/#123456`); the code is removed from the address bar after joining.
 - English and Vietnamese UI picked from the browser language (switchable), light and dark theme, strict Content Security Policy.
+- Best-effort per-IP rate limiting of signaling connections and room joins (Workers Rate Limiting bindings).
+- Security headers for the static site (`public/_headers`): CSP with `frame-ancestors`, HSTS, nosniff, referrer and permissions policies.
+- PayPal donate link in the footer, README and GitHub Sponsor button.
 - Integration tests, CI, and an optional GitHub Actions deploy workflow.

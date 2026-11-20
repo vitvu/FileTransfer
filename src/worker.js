@@ -66,6 +66,16 @@ export default {
     if (origin && !originAllowed(origin, url, env)) return new Response("Forbidden", { status: 403 });
 
     const kind = url.searchParams.get("kind");
+    if (kind !== "lan" && kind !== "create" && kind !== "join") return new Response("Bad request", { status: 400 });
+
+    // Per-client rate limits (Workers Rate Limiting bindings, see wrangler.toml). Joining a room is
+    // limited much harder than the rest, which makes guessing 6-digit codes impractical.
+    // The bindings are optional so local development and tests run without them.
+    const limiter = kind === "join" ? env.JOIN_LIMITER : env.WS_LIMITER;
+    if (limiter) {
+      const { success } = await limiter.limit({ key: lanKey(request.headers.get("CF-Connecting-IP")) });
+      if (!success) return refuse(4429, "ratelimited");
+    }
 
     const forward = (name, params) => {
       const u = new URL(request.url);
@@ -93,7 +103,7 @@ export default {
       return forward("room:" + code, { kind: "join", code });
     }
 
-    return new Response("Bad request", { status: 400 });
+    return new Response("Bad request", { status: 400 }); // unreachable: kind was validated above
   },
 };
 
