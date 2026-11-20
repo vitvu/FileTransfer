@@ -16,7 +16,7 @@ Peer-to-peer over WebRTC. No uploads, no account, no install.
 
 <img src="docs/demo-light.png" width="600" alt="FileTransfer on desktop: enter a room code, or pick a nearby device">
 &nbsp;
-<img src="docs/demo-dark.png" width="200" alt="Dark theme on a phone receiving a file">
+<img src="docs/demo-dark.png" width="200" alt="Incoming-file popup with an image preview, dark theme on a phone">
 
 </div>
 
@@ -25,8 +25,8 @@ Peer-to-peer over WebRTC. No uploads, no account, no install.
 - **Direct and encrypted.** File data goes from one browser straight to the other (WebRTC, DTLS). It never touches a server.
 - **Two ways to connect.** Devices on the same network find each other automatically, or pair across networks with a 6-digit room code or a shareable link.
 - **Know who's who.** Nearby devices show an OS icon and label, such as *iPhone · Safari*, *Windows · Chrome* or *Pixel 7 · Chrome*.
-- **Big files.** Up to 1 GB, delivered unchanged. On Chrome and Edge the receiver streams to disk, so memory stays flat.
-- **You stay in control.** The receiver approves every file, and either side can cancel.
+- **A clear popup for every transfer.** The receiver sees who is sending, a preview for images (or a file-type icon), the size, then taps **Accept** or **Decline**. Progress and the result appear in the same popup, and the rest of the page stays out of the way.
+- **Big files.** Up to 1 GB, delivered unchanged. Small files just download; on Chrome and Edge, files over 200 MB are streamed to disk so memory stays flat.
 - **Clean and light.** Zero runtime dependencies. English and Vietnamese (picked from your browser), light theme by default with a dark-mode button.
 
 ## Using it
@@ -54,6 +54,7 @@ The web app (`public/`) is static. A single Cloudflare Worker with a Durable Obj
 
 - **File contents never reach the Worker or any server.**
 - **The Worker sees** your IP (to group devices on one network), a random id and name, your coarse device info, and the handshake messages it relays. Nothing is stored or logged; the only persisted state is a "room is active" flag that expires 10 minutes after the room empties.
+- **The receiver sees** a tiny preview (a JPEG thumbnail under 16 KB) of an image *before* accepting it, plus your device label.
 - **Other parties see** your IP: WebRTC shows it to the device you connect to and to the STUN servers (Cloudflare and Google). The device you connect to also sees your OS and browser, for example *iPhone · Safari*.
 - **No tracking.** No analytics, cookies or third-party scripts (enforced by a strict Content Security Policy). The only thing kept in `localStorage` is your light/dark choice.
 - **Hardened.** Origin allow-list, validated inputs, best-effort rate limits, 2-device rooms, and security headers (CSP, HSTS and more).
@@ -81,7 +82,7 @@ Free on Cloudflare, no credit card: `npx wrangler login && npm run deploy`. Set 
 
 | | Send | Receive |
 |---|:---:|---|
-| Chrome, Edge (desktop) | ✅ | ✅ streamed to disk |
+| Chrome, Edge (desktop) | ✅ | ✅ downloads directly; files over 200 MB ask where to save and stream to disk |
 | Firefox, Safari, mobile | ✅ | ✅ buffered in memory, then downloaded |
 
 - **No TURN relay.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) can block direct connections. Same-LAN devices almost always connect. You can add a TURN server in `public/app.js`.

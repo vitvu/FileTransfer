@@ -33,9 +33,7 @@ const en = {
   emptyRoom: "Waiting for the other device to join…",
   emptyLan: "No other device yet",
 
-  transfers: "Transfers",
   footer: "Files travel directly between devices (WebRTC, encrypted). The server never sees them.",
-  drop: "Drop a file here, or press Send",
   send: "Send file",
   youAre: (n) => `You appear as ${n}`,
   connecting: "Connecting…",
@@ -43,8 +41,11 @@ const en = {
   tooBig: (f) => `"${f}" is larger than 1 GB and cannot be sent.`,
   busyTx: "Another file is already being transferred. Wait for it to finish.",
   peerFallback: "the other device",
-  waitAccept: (n, s) => `Waiting for ${n} to accept… (${s})`,
-  wantsSend: (n, s) => `${n} wants to send you a file (${s})`,
+  waitAccept: (n) => `Waiting for ${n} to accept…`,
+  incomingTitle: "Incoming file",
+  sendingTitle: "Sending file",
+  acceptHint: "Accept to receive this file.",
+  close: "Close",
   cancel: "Cancel",
   accept: "Accept",
   reject: "Decline",
@@ -53,7 +54,7 @@ const en = {
   canceled: "Canceled",
   canceledByPeer: "Canceled by the other device",
   lostConn: "Connection lost",
-  pickerCanceled: "Save location not chosen",
+  pickerCanceled: "No save location chosen. Press Accept to choose again, or Decline.",
   receiving: "Receiving…",
   waitFinish: "Waiting for the receiver to finish…",
   done: (avg) => `Done · ${avg}`,
@@ -72,7 +73,6 @@ const en = {
   p2pTimeout: "Timed out while connecting to the other device.",
   langSwitch: "Tiếng Việt",
   themeToggle: "Switch light / dark theme",
-  donate: "Support the project",
 };
 
 const vi = {
@@ -108,9 +108,7 @@ const vi = {
   emptyRoom: "Đang chờ thiết bị kia vào phòng…",
   emptyLan: "Chưa có thiết bị khác",
 
-  transfers: "Truyền file",
   footer: "File đi thẳng giữa hai thiết bị (WebRTC, được mã hóa). Máy chủ không thấy file.",
-  drop: "Kéo thả file vào đây, hoặc bấm Gửi",
   send: "Gửi file",
   youAre: (n) => `Bạn hiện là ${n}`,
   connecting: "Đang kết nối…",
@@ -118,8 +116,11 @@ const vi = {
   tooBig: (f) => `"${f}" lớn hơn 1 GB, không gửi được.`,
   busyTx: "Đang có file khác truyền, đợi xong rồi gửi tiếp.",
   peerFallback: "thiết bị kia",
-  waitAccept: (n, s) => `Chờ ${n} đồng ý… (${s})`,
-  wantsSend: (n, s) => `${n} muốn gửi file ${s}`,
+  waitAccept: (n) => `Chờ ${n} đồng ý…`,
+  incomingTitle: "File đến",
+  sendingTitle: "Đang gửi file",
+  acceptHint: "Bấm Nhận để nhận file này.",
+  close: "Đóng",
   cancel: "Hủy",
   accept: "Nhận",
   reject: "Từ chối",
@@ -128,7 +129,7 @@ const vi = {
   canceled: "Đã hủy",
   canceledByPeer: "Bên kia đã hủy",
   lostConn: "Mất kết nối",
-  pickerCanceled: "Chưa chọn nơi lưu",
+  pickerCanceled: "Chưa chọn nơi lưu. Bấm Nhận để chọn lại, hoặc Từ chối.",
   receiving: "Đang nhận…",
   waitFinish: "Đang chờ bên nhận hoàn tất…",
   done: (avg) => `Hoàn tất · ${avg}`,
@@ -147,7 +148,6 @@ const vi = {
   p2pTimeout: "Hết thời gian chờ kết nối với thiết bị kia.",
   langSwitch: "English",
   themeToggle: "Đổi giao diện sáng / tối",
-  donate: "Ủng hộ dự án",
 };
 
 const dicts = { en, vi };

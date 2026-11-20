@@ -59,7 +59,7 @@ The files in `public/` work on any static host (Cloudflare Pages, GitHub Pages, 
 | `ALLOWED_ORIGINS` | `wrangler.toml` | Origins allowed to open a signaling connection. The page's own origin is always allowed. |
 | `JOIN_LIMITER`, `WS_LIMITER` | `wrangler.toml` | Best-effort rate limits per client IP: 10 room joins / 60 connections per minute. |
 | `signalingUrl` | `public/config.js` | Signaling WebSocket URL. Empty means "same origin". |
-| `MAX_SIZE`, `CHUNK`, `HIGH`, `LOW` | `public/app.js` | File size limit and flow-control tuning. |
+| `MAX_SIZE`, `CHUNK`, `HIGH`, `LOW`, `STREAM_MIN` | `public/app.js` | File size limit, flow-control tuning, and the size above which Chrome/Edge stream to disk (200 MB). |
 | `ICE` | `public/app.js` | STUN and TURN servers. |
 | `ROOM_IDLE_MS`, `ROOM_MAX`, `LAN_MAX` | `src/worker.js` | Room expiry (10 min), room size (2), LAN group size (20). |
 | Translations | `public/i18n.js` | English and Vietnamese strings. Add a language by adding a dictionary. |
@@ -68,7 +68,7 @@ The files in `public/` work on any static host (Cloudflare Pages, GitHub Pages, 
 ## Project structure
 
 ```
-public/            Static web app: index.html, app.js, device.js, i18n.js, theme.js, style.css, config.js, _headers
+public/            Static web app: index.html, app.js, modal.js, device.js, i18n.js, theme.js, style.css, config.js, _headers
 src/worker.js      Signaling Worker and Room Durable Object
 test/              Signaling integration tests
 docs/              This guide and the README screenshots

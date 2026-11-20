@@ -3,6 +3,7 @@
 // (a Cloudflare Worker) only relays small handshake messages and never sees file contents.
 import { t, applyStatic, getLang, setLang } from "./i18n.js";
 import { describeDevice, deviceParams, deviceLabel, deviceIcon } from "./device.js";
+import { openTransfer, makeThumb, validThumb, isTransferOpen, fmt } from "./modal.js";
 
 const MAX_SIZE = 1024 ** 3; // 1 GiB
 const CHUNK = 64 * 1024; // size of each DataChannel message
@@ -10,16 +11,11 @@ const BLOCK = 1024 * 1024; // read the file from disk in 1 MB blocks (the next b
 const HIGH = 8 * 1024 * 1024; // pause sending above this much queued data (backpressure)
 const LOW = 2 * 1024 * 1024; // resume sending when the queue drops below this
 const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
+const STREAM_MIN = 200 * 1024 * 1024; // only files above this ask where to save (streamed to disk); smaller ones download directly
 const CONNECT_TIMEOUT = 15000;
 const ICE = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] };
 
 const $ = (s) => document.querySelector(s);
-const fmt = (n) => {
-  const u = ["B", "KB", "MB", "GB"];
-  let i = 0;
-  while (n >= 1024 && i < 3) (n /= 1024), i++;
-  return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
-};
 const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 200) || "file";
 
 function signalingBase() {
@@ -128,43 +124,6 @@ $("#file").onchange = (e) => {
   e.target.value = "";
   if (f && pickFor) sendFile(pickFor, f);
 };
-
-// Every piece of text from the network or a file name is inserted with textContent (never innerHTML).
-function newTx(title) {
-  const el = document.createElement("div");
-  el.className = "tx";
-  el.innerHTML = '<div class="row"><span class="name"></span><span class="pct"></span></div><div class="bar"><i></i></div><div class="info"></div><div class="acts"></div>';
-  el.querySelector(".name").textContent = title;
-  $("#transfers-wrap").hidden = false;
-  $("#transfers").prepend(el);
-  const q = (s) => el.querySelector(s);
-  const ui = {
-    pct(p) {
-      q(".bar i").style.width = p.toFixed(1) + "%";
-      q(".pct").textContent = Math.floor(p) + "%";
-    },
-    info(text) {
-      q(".info").textContent = text;
-    },
-    acts(list) {
-      q(".acts").replaceChildren(
-        ...list.map(([label, fn, primary]) => {
-          const b = document.createElement("button");
-          b.textContent = label;
-          if (primary) b.className = "primary";
-          b.onclick = fn;
-          return b;
-        })
-      );
-    },
-    end(cls, text) {
-      el.classList.add(cls);
-      ui.info(text);
-      ui.acts([]);
-    },
-  };
-  return ui;
-}
 
 function mkMeter(ui, total) {
   const t0 = performance.now();
@@ -386,22 +345,29 @@ function sendFile(pid, file) {
 
 function startSend(c, file) {
   setStatus("");
-  if (c.tx || c.rx) return setStatus(t("busyTx"), true);
-  const ui = newTx("↑ " + file.name);
-  ui.info(t("waitAccept", peerName(c.pid), fmt(file.size)));
+  if (c.tx || c.rx || isTransferOpen()) return setStatus(t("busyTx"), true);
+  const ui = openTransfer({ dir: "out", name: file.name, size: file.size, type: file.type, peer: peers.get(c.pid) || { name: peerName(c.pid) } });
+  ui.info(t("waitAccept", peerName(c.pid)));
   const tx = { file, ui, cancelled: false, state: "wait" };
   c.tx = tx;
-  ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"))]]);
-  c.dc.send(JSON.stringify({ t: "offer", name: file.name, size: file.size, type: file.type }));
+  ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"), true)]]);
+  // Send the offer together with a small preview when the file is an image.
+  makeThumb(file).then((thumb) => {
+    if (thumb) ui.setThumb(thumb);
+    if (!tx.cancelled && c.dc && c.dc.readyState === "open") {
+      c.dc.send(JSON.stringify({ t: "offer", name: file.name, size: file.size, type: file.type, thumb: thumb || undefined }));
+    }
+  });
 }
 
-function cancelTx(c, notify, msg) {
+function cancelTx(c, notify, msg, silent) {
   const tx = c.tx;
   if (!tx) return;
   c.tx = null;
   tx.cancelled = true;
   if (notify && c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "cancel" }));
-  tx.ui.end("fail", msg);
+  if (silent) tx.ui.close();
+  else tx.ui.end("fail", msg);
 }
 
 function drain(dc) {
@@ -423,7 +389,7 @@ async function runSend(c) {
   tx.state = "send";
   const meter = mkMeter(tx.ui, file.size);
   tx.meterAvg = meter.avg;
-  tx.ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"))]]);
+  tx.ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"), true)]]);
   try {
     let off = 0;
     let next = file.size ? file.slice(0, BLOCK).arrayBuffer() : null;
@@ -492,11 +458,12 @@ function onData(c, data) {
 }
 
 function onOffer(c, m, send) {
-  if (c.rx || c.tx || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
+  if (c.rx || c.tx || isTransferOpen() || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
   const name = safeName(m.name);
-  const ui = newTx("↓ " + name);
-  ui.info(t("wantsSend", peerName(c.pid), fmt(m.size)));
-  const rx = { name, size: m.size, type: String(m.type || ""), ui, got: 0, w: null, pend: [], pendBytes: 0, chunks: [], accepted: false };
+  const type = String(m.type || "").slice(0, 100);
+  const ui = openTransfer({ dir: "in", name, size: m.size, type, peer: peers.get(c.pid) || { name: peerName(c.pid) }, thumb: validThumb(m.thumb) ? m.thumb : null });
+  ui.info(t("acceptHint"));
+  const rx = { name, size: m.size, type, ui, got: 0, w: null, pend: [], pendBytes: 0, chunks: [], accepted: false, accepting: false };
   rx.meter = mkMeter(ui, m.size);
   c.rx = rx;
   ui.acts([
@@ -506,30 +473,35 @@ function onOffer(c, m, send) {
       () => {
         send({ t: "reject" });
         c.rx = null;
-        ui.end("fail", t("declined"));
+        ui.close();
       },
     ],
   ]);
 }
 
 async function acceptRx(c, rx, send) {
-  try {
-    if (window.showSaveFilePicker) {
-      // Chrome / Edge: stream straight to disk, so memory use stays flat for large files.
+  if (rx.accepting) return;
+  rx.accepting = true;
+  if (window.showSaveFilePicker && rx.size > STREAM_MIN) {
+    // Big file on Chrome / Edge: ask where to save and stream straight to disk, so memory stays flat.
+    try {
       const h = await window.showSaveFilePicker({ suggestedName: rx.name });
       rx.w = await h.createWritable();
+    } catch (e) {
+      if (e.name === "AbortError") {
+        // The save dialog was dismissed: stay on the prompt so the user can try again or decline.
+        rx.accepting = false;
+        rx.ui.info(t("pickerCanceled"));
+        return;
+      }
+      // any other error: fall back to buffering in memory and downloading at the end
     }
-  } catch (e) {
-    if (e.name === "AbortError") {
-      send({ t: "reject" });
-      c.rx = null;
-      return rx.ui.end("fail", t("pickerCanceled"));
-    } // any other error: fall back to buffering in memory and downloading at the end
   }
   if (c.rx !== rx) return rx.w && rx.w.abort().catch(() => {});
   rx.accepted = true;
   rx.ui.info(t("receiving"));
-  rx.ui.acts([[t("cancel"), () => abortRx(c, true, t("canceled"))]]);
+  rx.ui.pct(0);
+  rx.ui.acts([[t("cancel"), () => abortRx(c, true, t("canceled"), true)]]);
   send({ t: "accept" });
 }
 
@@ -582,14 +554,15 @@ async function finishRx(c, send) {
   }
 }
 
-function abortRx(c, notify, msg) {
+function abortRx(c, notify, msg, silent) {
   const rx = c.rx;
   if (!rx) return;
   c.rx = null;
   if (rx.w) rx.w.abort().catch(() => {});
   rx.chunks = [];
   if (notify && c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "cancel" }));
-  rx.ui.end("fail", msg);
+  if (silent) rx.ui.close();
+  else rx.ui.end("fail", msg);
 }
 
 // ---------------- views, room code input, language ----------------
