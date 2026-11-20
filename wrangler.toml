@@ -1,0 +1,24 @@
+# Production config: the signaling server only. The web UI is hosted separately (GitHub Pages).
+name = "filetransfer-signaling"
+main = "src/worker.js"
+compatibility_date = "2026-10-31"
+
+# Expose the Worker on workers.dev but not on per-version preview URLs.
+workers_dev = true
+preview_urls = false
+
+# Web origins allowed to open a signaling WebSocket (comma separated, scheme + host, no path).
+[vars]
+ALLOWED_ORIGINS = "https://vitvu.github.io"
+
+# Do not retain request logs for this Worker.
+[observability]
+enabled = false
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

@@ -1,0 +1,596 @@
+// FileTransfer web client.
+// Files travel directly between two browsers over a WebRTC DataChannel. The signaling server
+// (a Cloudflare Worker) only relays small handshake messages and never sees file contents.
+import { t, applyStatic } from "./i18n.js";
+
+const MAX_SIZE = 1024 ** 3; // 1 GiB
+const CHUNK = 64 * 1024; // size of each DataChannel message
+const BLOCK = 1024 * 1024; // read the file from disk in 1 MB blocks (the next block is prefetched)
+const HIGH = 8 * 1024 * 1024; // pause sending above this much queued data (backpressure)
+const LOW = 2 * 1024 * 1024; // resume sending when the queue drops below this
+const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
+const CONNECT_TIMEOUT = 15000;
+const ICE = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] };
+
+const $ = (s) => document.querySelector(s);
+const fmt = (n) => {
+  const u = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  while (n >= 1024 && i < 3) (n /= 1024), i++;
+  return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+};
+const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 200) || "file";
+
+function signalingBase() {
+  const configured = window.FILETRANSFER_CONFIG?.signalingUrl;
+  if (configured) return configured.replace(/\/+$/, "");
+  return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+}
+
+// ---------------- state ----------------
+let mode = "lan"; // lan | room
+let ws = null;
+let session = 0; // bumped on every connect so events from stale sockets are ignored
+let pingTimer = 0;
+let me = null;
+let roomCode = "";
+let isCreator = false;
+const peers = new Map(); // id -> {id, name}
+const conns = new Map(); // id -> connection
+const queued = new Map(); // id -> File waiting for the data channel to open
+let pickFor = null;
+
+// ---------------- UI ----------------
+function setStatus(text, err) {
+  const el = $("#status");
+  el.textContent = text || "";
+  el.classList.toggle("err", !!err);
+}
+
+function renderPeers() {
+  const box = $("#peers");
+  box.replaceChildren();
+  for (const p of peers.values()) {
+    const card = document.createElement("div");
+    card.className = "peer";
+    const info = document.createElement("div");
+    const b = document.createElement("b");
+    b.textContent = p.name;
+    const s = document.createElement("span");
+    s.textContent = t("drop");
+    info.append(b, s);
+    const btn = document.createElement("button");
+    btn.className = "primary";
+    btn.textContent = t("send");
+    btn.onclick = () => {
+      pickFor = p.id;
+      $("#file").click();
+    };
+    card.append(info, btn);
+    card.ondragover = (e) => (e.preventDefault(), card.classList.add("drag"));
+    card.ondragleave = () => card.classList.remove("drag");
+    card.ondrop = (e) => {
+      e.preventDefault();
+      card.classList.remove("drag");
+      const f = e.dataTransfer.files[0];
+      if (f) sendFile(p.id, f);
+    };
+    box.append(card);
+  }
+  $("#empty").textContent = peers.size || !ws || ws.readyState !== 1 ? "" : mode === "lan" ? t("emptyLan") : t("emptyRoom");
+}
+
+$("#file").onchange = (e) => {
+  const f = e.target.files[0];
+  e.target.value = "";
+  if (f && pickFor) sendFile(pickFor, f);
+};
+
+// Every piece of text from the network or a file name is inserted with textContent (never innerHTML).
+function newTx(title) {
+  const el = document.createElement("div");
+  el.className = "tx";
+  el.innerHTML = '<div class="row"><span class="name"></span><span class="pct"></span></div><div class="bar"><i></i></div><div class="info"></div><div class="acts"></div>';
+  el.querySelector(".name").textContent = title;
+  $("#transfers").prepend(el);
+  const q = (s) => el.querySelector(s);
+  const ui = {
+    pct(p) {
+      q(".bar i").style.width = p.toFixed(1) + "%";
+      q(".pct").textContent = Math.floor(p) + "%";
+    },
+    info(text) {
+      q(".info").textContent = text;
+    },
+    acts(list) {
+      q(".acts").replaceChildren(
+        ...list.map(([label, fn]) => {
+          const b = document.createElement("button");
+          b.textContent = label;
+          b.onclick = fn;
+          return b;
+        })
+      );
+    },
+    end(cls, text) {
+      el.classList.add(cls);
+      ui.info(text);
+      ui.acts([]);
+    },
+  };
+  return ui;
+}
+
+function mkMeter(ui, total) {
+  const t0 = performance.now();
+  let last = 0;
+  const m = (bytes) => {
+    const now = performance.now();
+    if (now - last < 150) return;
+    last = now;
+    ui.pct(total ? (bytes / total) * 100 : 100);
+    ui.info(`${fmt(bytes)} / ${fmt(total)} · ${fmt(bytes / ((now - t0) / 1000 || 1))}/s`);
+  };
+  m.avg = () => t("avg", fmt(total), fmt(total / ((performance.now() - t0) / 1000 || 1)));
+  return m;
+}
+
+// ---------------- signaling ----------------
+function closeWS() {
+  session++;
+  clearInterval(pingTimer);
+  if (ws) {
+    ws.onclose = null;
+    try {
+      ws.close();
+    } catch {}
+  }
+  ws = null;
+}
+
+function resetAll() {
+  closeWS();
+  for (const id of [...conns.keys()]) closeConn(id);
+  queued.clear();
+  peers.clear();
+  me = null;
+  roomCode = "";
+  $("#me").textContent = "";
+  renderPeers();
+}
+
+function connect(kind, code) {
+  closeWS();
+  const gen = session;
+  const sock = new WebSocket(`${signalingBase()}?kind=${kind}${code ? "&code=" + code : ""}`);
+  ws = sock;
+  setStatus(t("connecting"));
+
+  sock.onopen = () => {
+    setStatus("");
+    pingTimer = setInterval(() => sock.readyState === 1 && sock.send("ping"), 30000);
+  };
+  sock.onmessage = (e) => {
+    if (gen !== session || e.data === "pong") return;
+    let m;
+    try {
+      m = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    onSignal(m);
+  };
+  sock.onclose = (e) => {
+    if (gen !== session) return;
+    clearInterval(pingTimer);
+    onWsClosed(e.code);
+  };
+}
+
+// Application close codes sent by the server: 4404 no such room, 4423 room full, 4500 busy.
+function onWsClosed(code) {
+  if (mode === "room" && (code === 4404 || code === 4423 || code === 4500)) {
+    if (code === 4404 && isCreator && roomCode) {
+      // Our own room expired (10 minutes with nobody online): transparently open a new one.
+      roomCode = "";
+      peers.clear();
+      renderPeers();
+      setStatus(t("roomExpired"));
+      return connect("create");
+    }
+    resetAll();
+    showChooser();
+    setStatus(code === 4404 ? t("noRoom") : code === 4423 ? t("roomFull") : t("busy"), true);
+    return;
+  }
+  setStatus(t("retrying"), true);
+  const gen = session;
+  setTimeout(() => {
+    if (gen !== session) return;
+    if (mode === "lan") connect("lan");
+    else connect(roomCode ? "join" : "create", roomCode);
+  }, 2000);
+}
+
+function sig(to, data) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ t: "sig", to, data }));
+}
+
+function onSignal(m) {
+  if (m.t === "hello") {
+    me = { id: m.id, name: m.name };
+    peers.clear();
+    m.peers.forEach((p) => peers.set(p.id, p));
+    $("#me").textContent = t("youAre", m.name);
+    if (m.code) {
+      roomCode = m.code;
+      $("#room-code").textContent = m.code;
+      $("#room-choose").hidden = true;
+      $("#room-info").hidden = false;
+    }
+    setStatus("");
+    renderPeers();
+  } else if (m.t === "join") {
+    peers.set(m.peer.id, m.peer);
+    renderPeers();
+  } else if (m.t === "leave") {
+    peers.delete(m.id);
+    const c = conns.get(m.id);
+    if (c && !(c.dc && c.dc.readyState === "open")) closeConn(m.id); // an open P2P channel outlives signaling
+    renderPeers();
+  } else if (m.t === "sig") {
+    onSig(m.from, m.data).catch((e) => console.warn(e));
+  }
+}
+
+// ---------------- WebRTC ----------------
+function mkConn(pid, initiator) {
+  const pc = new RTCPeerConnection(ICE);
+  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0 };
+  conns.set(pid, c);
+  pc.onicecandidate = (e) => e.candidate && sig(pid, { c: e.candidate });
+  pc.onconnectionstatechange = () => {
+    if (pc.connectionState === "failed" && conns.get(pid) === c) {
+      setStatus(t("p2pFail"), true);
+      closeConn(pid);
+    }
+  };
+  c.timer = setTimeout(() => {
+    if (conns.get(pid) === c && !(c.dc && c.dc.readyState === "open")) {
+      setStatus(t("p2pTimeout"), true);
+      closeConn(pid);
+    }
+  }, CONNECT_TIMEOUT);
+  if (initiator) {
+    setupDC(pid, c, pc.createDataChannel("f"));
+    pc.createOffer()
+      .then((o) => pc.setLocalDescription(o))
+      .then(() => sig(pid, { sdp: pc.localDescription }))
+      .catch((e) => console.warn(e));
+  } else {
+    pc.ondatachannel = (e) => setupDC(pid, c, e.channel);
+  }
+  return c;
+}
+
+function closeConn(pid) {
+  const c = conns.get(pid);
+  if (!c) return;
+  conns.delete(pid);
+  clearTimeout(c.timer);
+  queued.delete(pid);
+  cancelTx(c, false, t("lostConn"));
+  abortRx(c, false, t("lostConn"));
+  try {
+    c.pc.close();
+  } catch {}
+}
+
+async function onSig(from, d) {
+  let c = conns.get(from);
+  const flush = async () => {
+    c.remoteSet = true;
+    for (const x of c.cand.splice(0)) await c.pc.addIceCandidate(x).catch(() => {});
+  };
+  if (d.sdp) {
+    if (d.sdp.type === "offer") {
+      // Glare (both sides sent an offer): the peer with the smaller id wins.
+      if (c && c.initiator && c.pc.signalingState === "have-local-offer" && me.id < from) return;
+      if (c) {
+        const f = queued.get(from);
+        closeConn(from);
+        if (f) queued.set(from, f);
+      }
+      c = mkConn(from, false);
+      await c.pc.setRemoteDescription(d.sdp);
+      await flush();
+      await c.pc.setLocalDescription(await c.pc.createAnswer());
+      sig(from, { sdp: c.pc.localDescription });
+    } else if (c) {
+      await c.pc.setRemoteDescription(d.sdp);
+      await flush();
+    }
+  } else if (d.c && c) {
+    if (c.remoteSet) c.pc.addIceCandidate(d.c).catch(() => {});
+    else c.cand.push(d.c);
+  }
+}
+
+function setupDC(pid, c, dc) {
+  c.dc = dc;
+  dc.binaryType = "arraybuffer";
+  dc.bufferedAmountLowThreshold = LOW;
+  dc.onopen = () => {
+    clearTimeout(c.timer);
+    const f = queued.get(pid);
+    if (f) {
+      queued.delete(pid);
+      startSend(c, f);
+    }
+  };
+  dc.onmessage = (e) => onData(c, e.data);
+  dc.onclose = () => conns.get(pid) === c && closeConn(pid);
+}
+
+// ---------------- sending ----------------
+function peerName(pid) {
+  return peers.get(pid)?.name || t("peerFallback");
+}
+
+function sendFile(pid, file) {
+  if (file.size > MAX_SIZE) return setStatus(t("tooBig", file.name), true);
+  const c = conns.get(pid);
+  if (c && c.dc && c.dc.readyState === "open") return startSend(c, file);
+  queued.set(pid, file);
+  if (!c) mkConn(pid, true);
+  setStatus(t("connectingTo", peerName(pid)));
+}
+
+function startSend(c, file) {
+  setStatus("");
+  if (c.tx || c.rx) return setStatus(t("busyTx"), true);
+  const ui = newTx("↑ " + file.name);
+  ui.info(t("waitAccept", peerName(c.pid), fmt(file.size)));
+  const tx = { file, ui, cancelled: false, state: "wait" };
+  c.tx = tx;
+  ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"))]]);
+  c.dc.send(JSON.stringify({ t: "offer", name: file.name, size: file.size, type: file.type }));
+}
+
+function cancelTx(c, notify, msg) {
+  const tx = c.tx;
+  if (!tx) return;
+  c.tx = null;
+  tx.cancelled = true;
+  if (notify && c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "cancel" }));
+  tx.ui.end("fail", msg);
+}
+
+function drain(dc) {
+  return new Promise((res) => {
+    const timeout = setTimeout(done, 250); // safety net in case the channel closes while waiting
+    function done() {
+      clearTimeout(timeout);
+      dc.onbufferedamountlow = null;
+      res();
+    }
+    dc.onbufferedamountlow = done;
+  });
+}
+
+async function runSend(c) {
+  const tx = c.tx;
+  const dc = c.dc;
+  const file = tx.file;
+  tx.state = "send";
+  const meter = mkMeter(tx.ui, file.size);
+  tx.meterAvg = meter.avg;
+  tx.ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"))]]);
+  try {
+    let off = 0;
+    let next = file.size ? file.slice(0, BLOCK).arrayBuffer() : null;
+    while (next) {
+      const block = await next;
+      off += block.byteLength;
+      next = off < file.size ? file.slice(off, off + BLOCK).arrayBuffer() : null; // prefetch the next block
+      for (let o = 0; o < block.byteLength; o += CHUNK) {
+        if (tx.cancelled || dc.readyState !== "open") return;
+        while (dc.bufferedAmount > HIGH) {
+          await drain(dc);
+          if (tx.cancelled || dc.readyState !== "open") return;
+        }
+        dc.send(new Uint8Array(block, o, Math.min(CHUNK, block.byteLength - o)));
+      }
+      meter(off - dc.bufferedAmount);
+    }
+    if (tx.cancelled) return;
+    dc.send(JSON.stringify({ t: "done" })); // the channel is ordered, so "done" arrives after every chunk
+    tx.ui.info(t("waitFinish"));
+  } catch (e) {
+    if (!tx.cancelled) {
+      c.tx = null;
+      tx.ui.end("fail", t("errPrefix", e.message));
+    }
+  }
+}
+
+// ---------------- receiving ----------------
+function onData(c, data) {
+  if (typeof data !== "string") return onChunk(c, data);
+  let m;
+  try {
+    m = JSON.parse(data);
+  } catch {
+    return;
+  }
+  const send = (o) => c.dc.readyState === "open" && c.dc.send(JSON.stringify(o));
+  switch (m.t) {
+    case "offer":
+      return onOffer(c, m, send);
+    case "accept":
+      if (c.tx && c.tx.state === "wait") runSend(c);
+      break;
+    case "reject":
+      if (c.tx) {
+        c.tx.ui.end("fail", t("rejectedBy"));
+        c.tx = null;
+      }
+      break;
+    case "done":
+      finishRx(c, send);
+      break;
+    case "ok":
+      if (c.tx) {
+        c.tx.ui.pct(100);
+        c.tx.ui.end("done", t("done", c.tx.meterAvg ? c.tx.meterAvg() : ""));
+        c.tx = null;
+      }
+      break;
+    case "cancel":
+      cancelTx(c, false, t("canceledByPeer"));
+      abortRx(c, false, t("canceledByPeer"));
+      break;
+  }
+}
+
+function onOffer(c, m, send) {
+  if (c.rx || c.tx || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
+  const name = safeName(m.name);
+  const ui = newTx("↓ " + name);
+  ui.info(t("wantsSend", peerName(c.pid), fmt(m.size)));
+  const rx = { name, size: m.size, type: String(m.type || ""), ui, got: 0, w: null, pend: [], pendBytes: 0, chunks: [], accepted: false };
+  rx.meter = mkMeter(ui, m.size);
+  c.rx = rx;
+  ui.acts([
+    [t("accept"), () => acceptRx(c, rx, send)],
+    [
+      t("reject"),
+      () => {
+        send({ t: "reject" });
+        c.rx = null;
+        ui.end("fail", t("declined"));
+      },
+    ],
+  ]);
+}
+
+async function acceptRx(c, rx, send) {
+  try {
+    if (window.showSaveFilePicker) {
+      // Chrome / Edge: stream straight to disk, so memory use stays flat for large files.
+      const h = await window.showSaveFilePicker({ suggestedName: rx.name });
+      rx.w = await h.createWritable();
+    }
+  } catch (e) {
+    if (e.name === "AbortError") {
+      send({ t: "reject" });
+      c.rx = null;
+      return rx.ui.end("fail", t("pickerCanceled"));
+    } // any other error: fall back to buffering in memory and downloading at the end
+  }
+  if (c.rx !== rx) return rx.w && rx.w.abort().catch(() => {});
+  rx.accepted = true;
+  rx.ui.info(t("receiving"));
+  rx.ui.acts([[t("cancel"), () => abortRx(c, true, t("canceled"))]]);
+  send({ t: "accept" });
+}
+
+function onChunk(c, buf) {
+  const rx = c.rx;
+  if (!rx || !rx.accepted) return;
+  rx.got += buf.byteLength;
+  if (rx.got > rx.size) return abortRx(c, true, t("overSize"));
+  if (rx.w) {
+    rx.pend.push(buf);
+    rx.pendBytes += buf.byteLength;
+    if (rx.pendBytes >= FLUSH) flushRx(c, rx);
+  } else rx.chunks.push(buf);
+  rx.meter(rx.got);
+}
+
+function flushRx(c, rx) {
+  if (!rx.pend.length) return;
+  const blob = new Blob(rx.pend);
+  rx.pend = [];
+  rx.pendBytes = 0;
+  rx.w.write(blob).catch((e) => abortRx(c, true, t("writeErr", e.message)));
+}
+
+async function finishRx(c, send) {
+  const rx = c.rx;
+  if (!rx || !rx.accepted) return;
+  try {
+    if (rx.got !== rx.size) throw new Error(t("missing"));
+    if (rx.w) {
+      flushRx(c, rx);
+      await rx.w.close(); // resolves after every queued write has finished
+    } else {
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob(rx.chunks, { type: rx.type }));
+      a.download = rx.name;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+      rx.chunks = [];
+    }
+    if (c.rx !== rx) return;
+    c.rx = null;
+    rx.ui.pct(100);
+    rx.ui.end("done", t("done", rx.meter.avg()));
+    send({ t: "ok" });
+  } catch (e) {
+    abortRx(c, true, t("errPrefix", e.message));
+  }
+}
+
+function abortRx(c, notify, msg) {
+  const rx = c.rx;
+  if (!rx) return;
+  c.rx = null;
+  if (rx.w) rx.w.abort().catch(() => {});
+  rx.chunks = [];
+  if (notify && c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "cancel" }));
+  rx.ui.end("fail", msg);
+}
+
+// ---------------- modes / tabs ----------------
+function showChooser() {
+  $("#room-choose").hidden = false;
+  $("#room-info").hidden = true;
+}
+
+function setMode(m) {
+  mode = m;
+  $("#tab-lan").classList.toggle("on", m === "lan");
+  $("#tab-room").classList.toggle("on", m === "room");
+  $("#panel-room").hidden = m !== "room";
+  resetAll();
+  setStatus("");
+  if (m === "lan") connect("lan");
+  else showChooser();
+}
+
+$("#tab-lan").onclick = () => mode !== "lan" && setMode("lan");
+$("#tab-room").onclick = () => mode !== "room" && setMode("room");
+$("#btn-create").onclick = () => {
+  isCreator = true;
+  roomCode = "";
+  connect("create");
+};
+$("#join-form").onsubmit = (e) => {
+  e.preventDefault();
+  const code = $("#code-in").value.trim();
+  if (!/^\d{6}$/.test(code)) return setStatus(t("code6"), true);
+  isCreator = false;
+  roomCode = code;
+  connect("join", code);
+};
+$("#btn-leave").onclick = (e) => {
+  e.preventDefault();
+  resetAll();
+  showChooser();
+};
+
+applyStatic();
+setMode("lan");

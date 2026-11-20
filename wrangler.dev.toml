@@ -1,0 +1,18 @@
+# Local development only: serves the web UI and the signaling server from ONE origin
+# (http://localhost:8787), so no CORS/Origin setup and no config.js edits are needed.
+# Not used for deployment.
+name = "filetransfer-dev"
+main = "src/worker.js"
+compatibility_date = "2026-10-31"
+
+[assets]
+directory = "./public"
+run_worker_first = ["/ws"]
+
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]

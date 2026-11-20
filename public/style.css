@@ -1,0 +1,37 @@
+:root{--bg:#f5f6f8;--card:#fff;--line:#dde1e7;--fg:#1c2330;--mut:#6b7585;--acc:#2563eb;--ok:#16a34a;--err:#dc2626}
+@media(prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b2029;--line:#2c3340;--fg:#e6e9ef;--mut:#8b95a7}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:640px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:8px 0 16px}h1 small{font-size:12px;color:var(--mut);font-weight:400;margin-left:6px}
+h2{font-size:16px;margin:28px 0 8px}
+.tabs{display:flex;gap:6px;margin-bottom:14px}
+.tabs button{flex:1}
+button{font:inherit;padding:9px 14px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:8px;cursor:pointer}
+button:hover{border-color:var(--acc)}
+button.on,button.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+input{font:inherit;padding:9px 12px;border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--fg);width:150px;letter-spacing:2px}
+#room-choose{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+#room-choose .hint{flex-basis:100%;margin:0}
+#join-form{display:flex;gap:6px}
+.or{color:var(--mut)}
+.code{font-size:44px;font-weight:700;letter-spacing:8px;text-align:center;padding:10px;background:var(--card);border:1px dashed var(--line);border-radius:12px}
+.hint{color:var(--mut);font-size:13px;margin:6px 0}
+.status{margin:10px 0 0;font-size:13px;color:var(--mut)}
+.status.err{color:var(--err)}
+.peers{display:grid;gap:10px;margin-top:10px}
+.peer{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px;background:var(--card);border:2px solid var(--line);border-radius:12px}
+.peer.drag{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 8%,var(--card))}
+.peer b{display:block}.peer span{font-size:12px;color:var(--mut)}
+.tx{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-bottom:8px}
+.tx .row{display:flex;justify-content:space-between;gap:8px;font-size:13px}
+.tx .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.bar{height:6px;background:var(--line);border-radius:3px;margin:8px 0 4px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--acc)}
+.tx.done .bar i{background:var(--ok)}.tx.fail .bar i{background:var(--err)}
+.tx .info{font-size:12px;color:var(--mut)}
+.tx .acts{display:flex;gap:6px;margin-top:6px}
+.tx .acts button{padding:5px 12px;font-size:13px}
+footer{margin-top:40px;font-size:12px;color:var(--mut)}
+footer a{color:var(--acc)}
+.hint a,.status a{color:var(--acc)}

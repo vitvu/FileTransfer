@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Start local signaling server
+        run: |
+          npx wrangler dev -c wrangler.dev.toml --port 8787 > dev.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:8787/ > /dev/null && exit 0
+            sleep 1
+          done
+          cat dev.log
+          exit 1
+      - name: Signaling tests
+        run: npm test

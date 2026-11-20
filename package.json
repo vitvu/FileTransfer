@@ -1,0 +1,26 @@
+{
+  "name": "filetransfer",
+  "version": "1.0.0",
+  "description": "Peer-to-peer file transfer in the browser over WebRTC. Files go directly between devices; a tiny Cloudflare Worker only brokers the connection.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vitvu/FileTransfer.git"
+  },
+  "homepage": "https://github.com/vitvu/FileTransfer#readme",
+  "bugs": "https://github.com/vitvu/FileTransfer/issues",
+  "keywords": ["webrtc", "p2p", "file-transfer", "cloudflare-workers", "snapdrop", "datachannel"],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "wrangler dev -c wrangler.dev.toml --ip 0.0.0.0",
+    "deploy": "wrangler deploy",
+    "test": "node test/signaling.test.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

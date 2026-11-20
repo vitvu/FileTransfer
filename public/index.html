@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self' wss: ws:; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <title>FileTransfer · P2P file sharing</title>
+  <meta name="description" content="Send files directly between devices in your browser. Peer-to-peer over WebRTC, no uploads, no account.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232563eb'/%3E%3Cpath d='M9 16h14m0 0l-5-5m5 5l-5 5' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <h1>FileTransfer <small data-i18n="subtitle"></small></h1>
+
+  <nav class="tabs">
+    <button id="tab-lan" class="on" data-i18n="tabLan"></button>
+    <button id="tab-room" data-i18n="tabRoom"></button>
+  </nav>
+
+  <section id="panel-room" hidden>
+    <div id="room-choose">
+      <button id="btn-create" class="primary" data-i18n="create"></button>
+      <span class="or" data-i18n="or"></span>
+      <form id="join-form">
+        <input id="code-in" inputmode="numeric" maxlength="6" data-i18n-ph="codePh" autocomplete="off">
+        <button data-i18n="join"></button>
+      </form>
+      <p class="hint" data-i18n="roomHint"></p>
+    </div>
+    <div id="room-info" hidden>
+      <div class="code" id="room-code">------</div>
+      <p class="hint"><span data-i18n="codeHint"></span> <a href="#" id="btn-leave" data-i18n="leave"></a></p>
+    </div>
+  </section>
+
+  <p id="status" class="status"></p>
+  <p id="me" class="hint"></p>
+
+  <section id="peers" class="peers"></section>
+  <p id="empty" class="hint"></p>
+
+  <h2 data-i18n="transfers"></h2>
+  <section id="transfers"></section>
+
+  <footer>
+    <span data-i18n="footer"></span>
+    <a href="https://github.com/vitvu/FileTransfer" target="_blank" rel="noopener noreferrer">GitHub</a>
+  </footer>
+</main>
+<input type="file" id="file" hidden>
+<script src="config.js"></script>
+<script src="app.js" type="module"></script>
+</body>
+</html>
