@@ -16,6 +16,7 @@ All notable changes to this project are documented here. The format follows [Kee
 - Home page with a 6-box room-code entry next to same-network discovery, plus step-by-step hints.
 - Shareable room links (`/#123456`); the code is removed from the address bar after joining.
 - Device label and OS icon next to each nearby device (iPhone · Safari, Windows · Chrome, Pixel 7 · Chrome), validated server-side.
+- Device detection cross-checks User-Agent Client Hints, touch support and screen size, so Android / iPhone in "request desktop site" mode are not mislabeled as Windows / Mac.
 - English and Vietnamese UI picked from the browser language (switchable); light theme by default with a dark-mode button; strict Content Security Policy.
 - Best-effort per-IP rate limiting of signaling connections and room joins (Workers Rate Limiting bindings).
 - Security headers for the static site (`public/_headers`): CSP with `frame-ancestors`, HSTS, nosniff, referrer and permissions policies.

@@ -4,22 +4,35 @@
 const OS_NAMES = { windows: "Windows", mac: "Mac", linux: "Linux", chromeos: "Chromebook" };
 const BROWSER_NAMES = { chrome: "Chrome", safari: "Safari", firefox: "Firefox", edge: "Edge", opera: "Opera", samsung: "Samsung Internet" };
 
+// The user agent alone is not reliable: "Request desktop site" on Android (and on iPhone / iPad) makes the browser
+// claim to be Windows / Linux / Mac. So we cross-check with User-Agent Client Hints, touch support and the screen.
 function syncDevice() {
   const ua = navigator.userAgent || "";
+  const uad = navigator.userAgentData; // Chromium only
+  const platform = (uad && uad.platform) || "";
+  const touch = navigator.maxTouchPoints || 0;
+  const minScreen = Math.min(window.screen.width || 0, window.screen.height || 0); // CSS px, independent of window size
+  const touchOnly = matchMedia("(pointer: coarse)").matches && matchMedia("(hover: none)").matches; // no mouse / trackpad
+  const formFactor = () => (minScreen && minScreen < 600 ? "phone" : "tablet");
+
   let os = "other";
   let type = "desktop";
   let model = "";
   if (/iPhone|iPod/.test(ua)) (os = "ios"), (type = "phone");
-  else if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) (os = "ios"), (type = "tablet");
-  else if (/Android/.test(ua)) {
+  else if (/iPad/.test(ua)) (os = "ios"), (type = "tablet");
+  else if (/Macintosh/.test(ua) && touch > 0) (os = "ios"), (type = formFactor()); // iOS "Request Desktop Website"
+  else if (/Android/.test(ua) || platform === "Android") {
     os = "android";
-    type = /Mobile/.test(ua) ? "phone" : "tablet";
+    type = (uad ? uad.mobile : /Mobile/.test(ua)) ? "phone" : "tablet";
     const m = ua.match(/Android [^;]*; ([^;)]+)/);
     if (m && m[1].trim() !== "K") model = m[1].replace(/\s*Build.*/, "").trim(); // Chrome reduces this to "K"
-  } else if (/Windows/.test(ua)) os = "windows";
-  else if (/Mac OS X|Macintosh/.test(ua)) os = "mac";
-  else if (/CrOS/.test(ua)) os = "chromeos";
-  else if (/Linux|X11/.test(ua)) os = "linux";
+  } else if (touch > 0 && touchOnly && minScreen <= 820 && /Windows|Linux|X11|CrOS/.test(ua)) {
+    // Touch-only small screen that claims to be a PC: Android in "Request desktop site" mode.
+    (os = "android"), (type = formFactor());
+  } else if (/Windows/.test(ua) || platform === "Windows") os = "windows";
+  else if (/Mac OS X|Macintosh/.test(ua) || platform === "macOS") os = "mac";
+  else if (/CrOS/.test(ua) || /Chrom(e|ium) ?OS/i.test(platform)) os = "chromeos";
+  else if (/Linux|X11/.test(ua) || platform === "Linux") os = "linux";
 
   let browser = "other";
   if (/Edg\//.test(ua)) browser = "edge";
