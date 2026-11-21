@@ -83,7 +83,10 @@ Free on Cloudflare, no credit card: `npx wrangler login && npm run deploy`. Set 
 | Chrome, Edge (desktop) | ✅ | ✅ downloads directly; files over 200 MB ask where to save and stream to disk |
 | Firefox, Safari, mobile | ✅ | ✅ buffered in memory, then downloaded |
 
-- **Relay is optional and limited.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) cannot connect directly. Configure a TURN relay ([see the deployment guide](docs/DEPLOYMENT.md)) so those transfers still work; relayed data stays end-to-end encrypted. Free relay plans have a small monthly quota. To protect that quota, files that have to go through the relay (devices on different, strict networks) are limited to **25 MB**; direct connections keep the full 1 GB.
+- **Relay is optional and limited.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) cannot connect directly. A TURN relay ([deployment guide](docs/DEPLOYMENT.md)) lets those transfers work; relayed data stays end-to-end encrypted. Because relay bandwidth is a shared free resource, the app is deliberately strict with it:
+  - Direct connections (same Wi-Fi, IPv6, ordinary NAT) are never limited: up to **1 GB** per file.
+  - Through the relay (code rooms only): **25 MB per file**, **one file every 30 seconds** per device and per IP address, and a daily cap on relay sessions for everyone (150 by default, `RELAY_DAILY_MAX`).
+  - Sizing: about 10 people a day sending about 10 files of 25 MB is roughly 2.5 GB a day, around 75 GB a month. That fits Cloudflare Realtime TURN (1 TB/month free); a 500 MB plan such as Metered's no-card tier only lasts for a few dozen transfers.
 - **One file at a time** per pair of devices, **1 GB** per file.
 - **"Nearby" means "same public IP".** Behind a VPN or proxy, use a room code instead.
 - **Speed depends on the browsers and network.** Expect tens of MB/s on a good local network, not line rate.

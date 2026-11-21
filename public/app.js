@@ -14,19 +14,23 @@ const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
 const STREAM_MIN = 200 * 1024 * 1024; // only files above this ask where to save (streamed to disk); smaller ones download directly
 const CONNECT_TIMEOUT = 30000;
 const RELAY_MAX = 25 * 1024 * 1024; // files sent through the TURN relay (different networks) are limited to 25 MB
-const ICE = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] };
-// Ask the Worker for TURN relay credentials (needed when the two devices are on different networks).
-async function loadIce() {
+const STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+const RELAY_GAP = 30 * 1000; // at most one file through the relay every 30 s
+// Relay (TURN) credentials are requested per connection, and only for code rooms (the devices of a same-network
+// group share an IP and connect directly). The Worker limits grants per IP and per day; see src/worker.js.
+async function iceFor(wantRelay) {
+  if (!wantRelay) return { servers: STUN, relay: "off" };
   try {
-    const base = (window.FILETRANSFER_CONFIG?.signalingUrl) || "";
-    const url = base ? base.replace(/^ws/, "http").replace(/\/ws$/, "/ice") : "/ice";
-    const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(2500) });
-    const d = await r.json();
-    if (Array.isArray(d.iceServers) && d.iceServers.length) ICE.iceServers = d.iceServers;
+    const base = window.FILETRANSFER_CONFIG?.signalingUrl || "";
+    const url = (base ? base.replace(/^ws/, "http").replace(/\/ws$/, "/ice") : "/ice") + "?relay=1";
+    const d = await (await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(4000) })).json();
+    if (Array.isArray(d.iceServers) && d.iceServers.length) return { servers: d.iceServers, relay: d.relay };
   } catch {}
+  return { servers: STUN, relay: "off" };
 }
-await loadIce();
-setInterval(loadIce, 3 * 3600 * 1000);
+let lastRelayAt = Number(sessionStorage.getItem("ft-relay-at")) || 0;
+const relayWait = () => Math.max(0, Math.ceil((lastRelayAt + RELAY_GAP - Date.now()) / 1000));
+const markRelay = () => (lastRelayAt = Date.now(), sessionStorage.setItem("ft-relay-at", String(lastRelayAt)));
 
 const $ = (s) => document.querySelector(s);
 const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 200) || "file";
@@ -283,27 +287,33 @@ function onSignal(m) {
 
 // ---------------- WebRTC ----------------
 function mkConn(pid, initiator) {
-  const pc = new RTCPeerConnection(ICE);
-  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0, opened: false, choosing: false, pre: null, preTimer: 0 };
+  const pc = new RTCPeerConnection({ iceServers: STUN });
+  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0, opened: false, choosing: false, pre: null, preTimer: 0, relayState: "off", ice: null };
+  // Fetch relay credentials (rooms only) before the first offer / answer is created, so candidates include the relay.
+  c.ice = iceFor(mode === "room").then(({ servers, relay }) => {
+    c.relayState = relay;
+    if (relay === "ok") pc.setConfiguration({ iceServers: servers });
+  });
   conns.set(pid, c);
   pc.onicecandidate = (e) => e.candidate && sig(pid, { c: e.candidate });
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === "failed" && conns.get(pid) === c) {
       // Only an error if we never managed to connect. A link that worked and later went away (the other
       // tab was closed, the phone went to sleep) is dropped silently and re-created on the next send.
-      if (!c.opened) setStatus(t("p2pFail"), true);
+      if (!c.opened) setStatus(t(c.relayState === "throttled" || c.relayState === "full" ? "relayBusy" : "p2pFail"), true);
       closeConn(pid);
     }
   };
   c.timer = setTimeout(() => {
     if (conns.get(pid) === c && !(c.dc && c.dc.readyState === "open")) {
-      setStatus(t("p2pTimeout"), true);
+      setStatus(t(c.relayState === "throttled" || c.relayState === "full" ? "relayBusy" : "p2pTimeout"), true);
       closeConn(pid);
     }
   }, CONNECT_TIMEOUT);
   if (initiator) {
     setupDC(pid, c, pc.createDataChannel("f"));
-    pc.createOffer()
+    c.ice
+      .then(() => pc.createOffer())
       .then((o) => pc.setLocalDescription(o))
       .then(() => sig(pid, { sdp: pc.localDescription }))
       .catch((e) => console.warn(e));
@@ -343,6 +353,7 @@ async function onSig(from, d) {
         if (f) queued.set(from, f);
       }
       c = mkConn(from, false);
+      await c.ice;
       await c.pc.setRemoteDescription(d.sdp);
       await flush();
       await c.pc.setLocalDescription(await c.pc.createAnswer());
@@ -428,7 +439,11 @@ function startSend(c, file) {
   // Send the offer together with a small preview when the file is an image.
   Promise.all([makeThumb(file), routeOf(c)]).then(([thumb, route]) => {
     if (tx.cancelled) return;
-    if (route === "relay" && file.size > RELAY_MAX) return cancelTx(c, false, t("relayLimit", fmt(RELAY_MAX))); // too big for the relay
+    if (route === "relay") {
+      if (file.size > RELAY_MAX) return cancelTx(c, false, t("relayLimit", fmt(RELAY_MAX))); // too big for the relay
+      if (relayWait()) return cancelTx(c, false, t("relayWait", relayWait())); // one relayed file per 30 s
+      markRelay();
+    }
     if (thumb) ui.setThumb(thumb);
     if (!tx.cancelled && c.dc && c.dc.readyState === "open") {
       c.dc.send(JSON.stringify({ t: "offer", name: file.name, size: file.size, type: file.type, thumb: thumb || undefined }));
@@ -555,7 +570,11 @@ function closePre(c) {
 }
 
 function onOffer(c, m, send) {
-  if (c.routeKind === "relay" && m.size > RELAY_MAX) return send({ t: "reject" }); // the relay only carries small files
+  if (c.routeKind === "relay") {
+    // the relay only carries small files, one at a time per 30 s
+    if (m.size > RELAY_MAX || relayWait()) return send({ t: "reject" });
+    markRelay();
+  }
   const waiting = c.pre; // the popup that has been waiting for this very file, if any
   if (c.rx || c.tx || (isTransferOpen() && !waiting) || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
   const name = safeName(m.name);

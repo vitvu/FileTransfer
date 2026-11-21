@@ -84,39 +84,66 @@ const ANIMALS = ["Fox", "Cat", "Dog", "Tiger", "Bear", "Rabbit", "Wolf", "Owl", 
 const COLORS = ["Blue", "Red", "Gold", "Purple", "Orange", "Pink", "Brown", "Teal", "Green", "Silver"];
 const pick = (a) => a[crypto.getRandomValues(new Uint32Array(1))[0] % a.length];
 
-// Short-lived TURN credentials (Cloudflare Realtime TURN). Peers on different networks often cannot connect
-// directly (mobile carriers, corporate NAT), so the data is relayed, still end-to-end encrypted by DTLS.
-// Without the TURN_KEY_ID / TURN_KEY_API_TOKEN secrets this returns STUN only.
-async function iceServers(request, url, env) {
-  const stun = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
-  const json = (servers) =>
-    new Response(JSON.stringify({ iceServers: servers }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
-  const origin = request.headers.get("Origin");
-  if (origin && !originAllowed(origin, url, env)) return new Response("Forbidden", { status: 403 });
-  const cf = env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN;
-  const metered = env.METERED_APP && env.METERED_API_KEY; // free alternative: https://www.metered.ca/tools/openrelay/
-  if (!cf && !metered) return json(stun);
-  if (env.WS_LIMITER) {
-    const { success } = await env.WS_LIMITER.limit({ key: lanKey(request.headers.get("CF-Connecting-IP")) });
-    if (!success) return json(stun);
-  }
-  try {
-    if (!cf) {
-      const r = await fetch(`https://${encodeURIComponent(env.METERED_APP)}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(env.METERED_API_KEY)}`);
-      if (!r.ok) return json(stun);
-      const list = await r.json();
-      return json(Array.isArray(list) && list.length ? [...stun, ...list] : stun);
-    }
+// TURN relay credentials. Peers on different networks often cannot connect directly (mobile carriers,
+// corporate NAT), so the data is relayed (still end-to-end encrypted by DTLS). Relay bandwidth is limited and
+// shared, so credentials are handed out sparingly: only on request (`?relay=1`, used for code rooms), at most
+// once per RELAY_COOLDOWN_MS per client IP, at most RELAY_DAILY_MAX times per day for everyone, and (Cloudflare) they expire
+// after RELAY_TTL_S. Configure ONE provider with Worker secrets (never in the repo):
+//   Cloudflare Realtime TURN: TURN_KEY_ID, TURN_KEY_API_TOKEN
+//   Metered Open Relay:       METERED_APP, METERED_API_KEY (static credential; free plan)
+const RELAY_COOLDOWN_MS = 30 * 1000;
+const RELAY_DAILY_MAX_DEFAULT = 150;
+const RELAY_TTL_S = 10 * 60;
+const STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+
+const iceResponse = (servers, relay) =>
+  new Response(JSON.stringify({ iceServers: servers, relay }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+
+async function counter(env, name, query) {
+  const r = await env.ROOMS.get(env.ROOMS.idFromName(name)).fetch(`https://rl.internal/rl?${query}`);
+  return (await r.json()).why || "ok";
+}
+
+async function relayServers(env) {
+  if (env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) {
     const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ttl: 6 * 3600 }),
+      body: JSON.stringify({ ttl: RELAY_TTL_S }),
     });
-    if (!r.ok) return json(stun);
-    const data = await r.json();
-    return json(Array.isArray(data.iceServers) && data.iceServers.length ? data.iceServers : stun);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return Array.isArray(d.iceServers) && d.iceServers.length ? d.iceServers : null;
+  }
+  if (env.METERED_APP && env.METERED_API_KEY) {
+    // Metered's free plan allows a single credential, so this one is static; the limits above are what protects it.
+    const r = await fetch(`https://${encodeURIComponent(env.METERED_APP)}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(env.METERED_API_KEY)}`);
+    if (!r.ok) return null;
+    const list = await r.json();
+    return Array.isArray(list) && list.length ? list : null;
+  }
+  return null;
+}
+
+async function iceServers(request, url, env) {
+  const origin = request.headers.get("Origin");
+  if (origin && !originAllowed(origin, url, env)) return new Response("Forbidden", { status: 403 });
+  if (url.searchParams.get("relay") !== "1") return iceResponse(STUN, "off");
+  if (!(env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) && !(env.METERED_APP && env.METERED_API_KEY)) return iceResponse(STUN, "off");
+  try {
+    // 1) one grant per client IP every 30 s (IPv6 is grouped by /64), 2) a daily cap for everyone
+    const ip = lanKey(request.headers.get("CF-Connecting-IP"));
+    const cool = env.RELAY_COOLDOWN_MS === undefined ? RELAY_COOLDOWN_MS : Number(env.RELAY_COOLDOWN_MS) || 0; // overridable, for testing
+    const per = cool ? await counter(env, "rl:ip:" + ip, `cool=${cool}&ttl=${cool * 2}`) : "ok";
+    if (per !== "ok") return iceResponse(STUN, "throttled");
+    const day = new Date().toISOString().slice(0, 10);
+    const max = Number(env.RELAY_DAILY_MAX) || RELAY_DAILY_MAX_DEFAULT;
+    const all = await counter(env, "rl:day:" + day, `max=${max}&ttl=${26 * 3600 * 1000}`);
+    if (all !== "ok") return iceResponse(STUN, "full");
+    const servers = await relayServers(env);
+    return servers ? iceResponse([...STUN, ...servers], "ok") : iceResponse(STUN, "off");
   } catch {
-    return json(stun);
+    return iceResponse(STUN, "off");
   }
 }
 
@@ -194,8 +221,26 @@ export class Room extends DurableObject {
     return this.ctx.getWebSockets().filter((s) => s !== except && s.readyState === 1);
   }
 
+  // Tiny counter used by the relay limits above (one DO per client IP / per day). Expires through the alarm.
+  async counter(p) {
+    const cool = Number(p.get("cool")) || 0;
+    const max = Number(p.get("max")) || 0;
+    const ttl = Number(p.get("ttl")) || 60000;
+    const now = Date.now();
+    const last = (await this.ctx.storage.get("last")) || 0;
+    const n = (await this.ctx.storage.get("n")) || 0;
+    const no = (why) => new Response(JSON.stringify({ ok: false, why }));
+    if (cool && now - last < cool) return no("throttled");
+    if (max && n >= max) return no("full");
+    await this.ctx.storage.put({ last: now, n: n + 1 });
+    await this.ctx.storage.setAlarm(now + ttl);
+    return new Response(JSON.stringify({ ok: true }));
+  }
+
   async fetch(request) {
-    const p = new URL(request.url).searchParams;
+    const u = new URL(request.url);
+    if (u.pathname === "/rl") return this.counter(u.searchParams);
+    const p = u.searchParams;
     const kind = p.get("kind");
     const isRoom = kind !== "lan";
 

@@ -46,7 +46,9 @@ npx wrangler secret put TURN_KEY_ID
 npx wrangler secret put TURN_KEY_API_TOKEN
 ```
 
-**No card? Free alternative:** create an app at [Metered Open Relay](https://www.metered.ca/tools/openrelay/) (the 500 MB plan needs no card), add a credential, then set the secrets `METERED_APP` (the part before `.metered.live`) and `METERED_API_KEY` (the credential's API key) instead.
+**No card? Small alternative:** create an app at [Metered Open Relay](https://www.metered.ca/tools/openrelay/) (the 500 MB plan needs no card), add one credential, then set the secrets `METERED_APP` (the part before `.metered.live`) and `METERED_API_KEY` (the credential's API key) instead. The free plan allows a single static credential and only 500 MB a month, so it suits testing and light use.
+
+**Relay limits** (all enforced by the Worker, in `src/worker.js` and `public/app.js`): credentials are only issued to code rooms, once per client IP every 30 seconds (IPv6 grouped by /64), and at most `RELAY_DAILY_MAX` times a day in total (default 150; set it as a plain variable in `wrangler.toml`). Files over the relay are capped at 25 MB (`RELAY_MAX`) and one file per 30 seconds per device. All keys live in Worker secrets, never in the repository.
 
 Relayed data stays end-to-end encrypted (DTLS); the relay only sees ciphertext. Without these secrets the app uses STUN only.
 
