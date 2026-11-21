@@ -40,7 +40,7 @@ function originAllowed(origin, url, env) {
 const DEV_OS = new Set(["ios", "android", "windows", "mac", "linux", "chromeos", "other"]);
 const DEV_TYPE = new Set(["phone", "tablet", "desktop"]);
 const DEV_BROWSER = new Set(["chrome", "safari", "firefox", "edge", "opera", "samsung", "other"]);
-const DEV_KEYS = ["os", "type", "br", "model"];
+const DEV_KEYS = ["os", "type", "br", "model", "bv", "ov", "bid"];
 
 function parseDevice(p) {
   const os = p.get("os");
@@ -51,6 +51,18 @@ function parseDevice(p) {
     type: DEV_TYPE.has(type) ? type : "desktop",
     browser: DEV_BROWSER.has(br) ? br : "other",
     model: String(p.get("model") || "").replace(/[^\w .+()-]/g, "").trim().slice(0, 24),
+    bv: String(p.get("bv") || "").replace(/[^\d.]/g, "").slice(0, 10), // browser version
+    ov: String(p.get("ov") || "").replace(/[^\w.]/g, "").slice(0, 10), // OS version
+    bid: /^[\w-]{8,32}$/.test(p.get("bid") || "") ? p.get("bid") : "", // per-browser id, lets a browser hide its own other tabs
+  };
+}
+
+function parseNet(p) {
+  const ip = String(p.get("ip") || "");
+  return {
+    ip: /^[0-9a-fA-F:.]{3,45}$/.test(ip) ? ip : "",
+    isp: String(p.get("isp") || "").replace(/[^\p{L}\p{N} .,&()'-]/gu, "").slice(0, 40),
+    cc: /^[A-Z]{2}$/.test(p.get("cc") || "") ? p.get("cc") : "",
   };
 }
 
@@ -137,6 +149,11 @@ export default {
       const u = new URL(request.url);
       const q = new URLSearchParams(params);
       for (const k of DEV_KEYS) if (url.searchParams.has(k)) q.set(k, url.searchParams.get(k));
+      // Network details of this client (from Cloudflare, never from the client). Shown only to the other
+      // device of a code room, to help tell devices apart when they are not on the same network.
+      q.set("ip", request.headers.get("CF-Connecting-IP") || "");
+      q.set("isp", (request.cf && request.cf.asOrganization) || "");
+      q.set("cc", (request.cf && request.cf.country) || "");
       u.search = q.toString();
       return env.ROOMS.get(env.ROOMS.idFromName(name)).fetch(new Request(u, request));
     };
@@ -196,7 +213,7 @@ export class Room extends DurableObject {
     if (peers.length >= (isRoom ? ROOM_MAX : LAN_MAX)) return refuse(4423, "full");
 
     const [client, server] = Object.values(new WebSocketPair());
-    const me = { id: crypto.randomUUID().slice(0, 8), name: `${pick(COLORS)} ${pick(ANIMALS)}`, room: isRoom, dev: parseDevice(p) };
+    const me = { id: crypto.randomUUID().slice(0, 8), name: `${pick(COLORS)} ${pick(ANIMALS)}`, room: isRoom, dev: parseDevice(p), net: isRoom ? parseNet(p) : null };
     this.ctx.acceptWebSocket(server);
     server.serializeAttachment(me);
     if (isRoom) await this.ctx.storage.deleteAlarm();
@@ -209,11 +226,11 @@ export class Room extends DurableObject {
         code: p.get("code") || undefined,
         peers: peers.map((s) => {
           const a = s.deserializeAttachment();
-          return { id: a.id, name: a.name, dev: a.dev };
+          return { id: a.id, name: a.name, dev: a.dev, net: a.net || undefined };
         }),
       })
     );
-    const joinMsg = JSON.stringify({ t: "join", peer: { id: me.id, name: me.name, dev: me.dev } });
+    const joinMsg = JSON.stringify({ t: "join", peer: { id: me.id, name: me.name, dev: me.dev, net: me.net || undefined } });
     for (const s of peers) s.send(joinMsg);
 
     return new Response(null, { status: 101, webSocket: client });

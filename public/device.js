@@ -41,7 +41,29 @@ function syncDevice() {
   else if (/Firefox|FxiOS/.test(ua)) browser = "firefox";
   else if (/Chrome|CriOS/.test(ua)) browser = "chrome";
   else if (/Safari/.test(ua)) browser = "safari";
-  return { os, type, browser, model };
+
+  // versions (shown as "Windows 11 · Chrome 130")
+  const bm = ua.match(/(?:Edg|OPR|SamsungBrowser|Firefox|FxiOS|CriOS|Chrome|Version)\/(\d+)/);
+  const bv = bm ? bm[1] : "";
+  let ov = "";
+  if (os === "android") ov = (ua.match(/Android (\d+(?:\.\d+)?)/) || [])[1] || "";
+  else if (os === "ios") ov = ((ua.match(/OS (\d+[_.]\d+)/) || [])[1] || "").replace("_", ".");
+  else if (os === "windows") ov = "10"; // upgraded to 11 below when the browser can tell
+  return { os, type, browser, model, bv, ov, bid: browserId() };
+}
+
+// A random id kept in localStorage: tabs of the same browser share it, so they can hide each other.
+function browserId() {
+  try {
+    let id = localStorage.getItem("ft-bid");
+    if (!id) {
+      id = Array.from(crypto.getRandomValues(new Uint8Array(8)), (b) => b.toString(16).padStart(2, "0")).join("");
+      localStorage.setItem("ft-bid", id);
+    }
+    return id;
+  } catch {
+    return "";
+  }
 }
 
 // Chromium on Android can give the real model through User-Agent Client Hints.
@@ -49,9 +71,10 @@ export async function describeDevice() {
   const dev = syncDevice();
   try {
     const uad = navigator.userAgentData;
-    if (dev.os === "android" && uad && uad.getHighEntropyValues) {
-      const h = await Promise.race([uad.getHighEntropyValues(["model"]), new Promise((r) => setTimeout(r, 400))]);
-      if (h && h.model) dev.model = h.model;
+    if (uad && uad.getHighEntropyValues) {
+      const h = await Promise.race([uad.getHighEntropyValues(["model", "platformVersion"]), new Promise((r) => setTimeout(r, 400))]);
+      if (h && dev.os === "android" && h.model) dev.model = h.model;
+      if (h && dev.os === "windows" && h.platformVersion) dev.ov = parseInt(h.platformVersion, 10) >= 13 ? "11" : "10";
     }
   } catch {}
   dev.model = dev.model.replace(/[^\w .+()-]/g, "").trim().slice(0, 24);
@@ -59,17 +82,20 @@ export async function describeDevice() {
 }
 
 export function deviceParams(dev) {
-  return `&os=${dev.os}&type=${dev.type}&br=${dev.browser}&model=${encodeURIComponent(dev.model)}`;
+  return `&os=${dev.os}&type=${dev.type}&br=${dev.browser}&model=${encodeURIComponent(dev.model)}&bv=${dev.bv}&ov=${dev.ov}&bid=${encodeURIComponent(dev.bid)}`;
 }
 
 export function deviceLabel(dev) {
   if (!dev) return "";
   let name;
-  if (dev.os === "ios") name = dev.type === "tablet" ? "iPad" : "iPhone";
-  else if (dev.os === "android") name = dev.model || (dev.type === "tablet" ? "Android tablet" : "Android");
+  if (dev.os === "ios") name = (dev.type === "tablet" ? "iPad" : "iPhone") + (dev.ov ? ` (iOS ${dev.ov})` : "");
+  else if (dev.os === "android") {
+    name = dev.model || (dev.type === "tablet" ? "Android tablet" : "Android");
+    if (dev.ov) name += dev.model ? ` (Android ${dev.ov})` : ` ${dev.ov}`;
+  } else if (dev.os === "windows") name = "Windows" + (dev.ov ? ` ${dev.ov}` : "");
   else name = OS_NAMES[dev.os] || (dev.type === "phone" ? "Phone" : "Computer");
   const br = BROWSER_NAMES[dev.browser];
-  return br ? `${name} · ${br}` : name;
+  return br ? `${name} · ${br}${dev.bv ? " " + dev.bv : ""}` : name;
 }
 
 // Constant, trusted SVG markup (never built from network data).

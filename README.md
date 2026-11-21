@@ -22,7 +22,7 @@ Peer-to-peer over WebRTC. No uploads, no account, no install.
 
 - **Direct and encrypted.** File data goes from one browser straight to the other (WebRTC, DTLS). It never touches a server.
 - **Two ways to connect.** Devices on the same network find each other automatically, or pair across networks with a 6-digit room code or a shareable link.
-- **Know who's who.** Nearby devices show an OS icon and label, such as *iPhone · Safari*, *Windows · Chrome* or *Pixel 7 · Chrome*.
+- **Know who's who.** Nearby devices show an OS icon and label, with versions, such as *iPhone (iOS 17.5) · Safari 17*, *Windows 11 · Chrome 130* or *Pixel 7 (Android 14) · Chrome 130*. Tabs of the same browser never show up as other devices. For a code room, the IP address and network provider of the other device are shown too, so you can tell the devices apart. The transfer popup also tells you whether the link is direct or goes through a relay.
 - **A clear popup for every transfer.** As soon as someone presses **Send**, the other device shows "*X is choosing a file…*". When the file is picked, the same popup shows who is sending, an image preview (or a file-type icon) and the size, with **Accept** / **Decline**. Progress and the result stay in that popup, and the rest of the page steps out of the way.
 - **Big files.** Up to 1 GB, delivered unchanged. Small files just download; on Chrome and Edge, files over 200 MB are streamed to disk so memory stays flat.
 - **Clean and light.** Zero runtime dependencies. English and Vietnamese (picked from your browser), light theme by default with a dark-mode button.
@@ -53,7 +53,7 @@ The web app (`public/`) is static. A single Cloudflare Worker with a Durable Obj
 - **File contents never reach the Worker or any server.**
 - **The Worker sees** your IP (to group devices on one network), a random id and name, your coarse device info, and the handshake messages it relays. Nothing is stored or logged; the only persisted state is a "room is active" flag that expires 10 minutes after the room empties.
 - **The receiver sees** a small preview (a JPEG thumbnail of about 15-35 KB) of an image *before* accepting it, plus your device label. They also see that you are choosing a file.
-- **Other parties see** your IP: WebRTC shows it to the device you connect to and to the STUN servers (Cloudflare and Google). The device you connect to also sees your OS and browser, for example *iPhone · Safari*.
+- **Other parties see** your IP: WebRTC shows it to the device you connect to and to the STUN servers (Cloudflare and Google). The device you connect to also sees your OS, browser and their versions, for example *iPhone (iOS 17.5) · Safari 17*. In a code room, the other device also sees your public IP address, network provider and country (that is the point of the code: you are choosing to connect to them).
 - **No tracking.** No analytics, cookies or third-party scripts (enforced by a strict Content Security Policy). The only thing kept in `localStorage` is your light/dark choice.
 - **Hardened.** Origin allow-list, validated inputs, best-effort rate limits, 2-device rooms, and security headers (CSP, HSTS and more).
 - **Room codes are not secrets.** The receiver must approve every file and rooms expire quickly, but do not rely on a code to protect sensitive data.
@@ -83,7 +83,7 @@ Free on Cloudflare, no credit card: `npx wrangler login && npm run deploy`. Set 
 | Chrome, Edge (desktop) | ✅ | ✅ downloads directly; files over 200 MB ask where to save and stream to disk |
 | Firefox, Safari, mobile | ✅ | ✅ buffered in memory, then downloaded |
 
-- **No TURN relay.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) can block direct connections. Same-LAN devices almost always connect. You can add a TURN server in `public/app.js`.
+- **Relay is optional and limited.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) cannot connect directly. Configure a TURN relay ([see the deployment guide](docs/DEPLOYMENT.md)) so those transfers still work; relayed data stays end-to-end encrypted. Free relay plans have a small monthly quota.
 - **One file at a time** per pair of devices, **1 GB** per file.
 - **"Nearby" means "same public IP".** Behind a VPN or proxy, use a room code instead.
 - **Speed depends on the browsers and network.** Expect tens of MB/s on a good local network, not line rate.

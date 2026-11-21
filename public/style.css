@@ -210,6 +210,11 @@ footer a:hover { text-decoration: underline; }
 .m-file.big .m-badge { right: 8px; bottom: 8px; border-color: var(--surface); }
 .m-file.big .m-meta { padding: 0 6px 4px; }
 
+.m-route { margin-top: 10px; font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 6px; }
+.m-route::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
+.m-route[data-kind="relay"]::before { background: #f59e0b; }
+.peer .who small.net { color: var(--text-2); opacity: .85; }
+
 /* waiting for the other device to pick a file */
 .m-wait { display: flex; align-items: center; gap: 14px; padding: 18px; background: var(--surface-2); border-radius: 20px; color: var(--text-2); font-size: 14px; }
 .spin { flex: 0 0 auto; width: 24px; height: 24px; border: 3px solid var(--primary-soft); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }

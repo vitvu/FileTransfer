@@ -76,6 +76,7 @@ const SKELETON = `
   </div>
   <div class="m-progress" hidden><div class="bar"><i></i></div><div class="m-pct"></div></div>
   <p class="m-msg"></p>
+  <div class="m-route" hidden></div>
   <div class="m-acts"></div>
 </div>`;
 
@@ -166,6 +167,12 @@ export function openTransfer(opts) {
       q(".m-progress").hidden = false;
       q(".bar i").style.width = p.toFixed(1) + "%";
       q(".m-pct").textContent = Math.floor(p) + "%";
+    },
+    route(kind) {
+      const el = q(".m-route");
+      el.hidden = false;
+      el.dataset.kind = kind;
+      el.textContent = t(kind === "relay" ? "routeRelay" : kind === "lan" ? "routeLan" : "routeDirect");
     },
     info(text) {
       q(".m-msg").textContent = text;

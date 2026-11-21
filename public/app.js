@@ -80,6 +80,13 @@ function peerCard(p) {
   const dev = document.createElement("small");
   dev.textContent = deviceLabel(p.dev);
   who.append(b, dev);
+  if (p.net && (p.net.ip || p.net.isp)) {
+    // Only sent for code rooms (devices not necessarily on the same network): IP, ISP and country.
+    const net = document.createElement("small");
+    net.className = "net";
+    net.textContent = [p.net.ip, p.net.isp, p.net.cc].filter(Boolean).join(" · ");
+    who.append(net);
+  }
   const btn = document.createElement("button");
   btn.className = "btn small";
   btn.textContent = t("send");
@@ -98,10 +105,12 @@ function peerCard(p) {
 
 function renderPeers() {
   const inRoom = mode === "room";
-  $("#peers").replaceChildren(...(inRoom ? [] : [...peers.values()].map(peerCard)));
-  $("#room-peers").replaceChildren(...(inRoom ? [...peers.values()].map(peerCard) : []));
-  $("#lan-steps").hidden = peers.size > 0;
-  $("#room-empty").hidden = peers.size > 0;
+  // Other tabs of this same browser share its id: they are not "other devices", so they are hidden.
+  const list = [...peers.values()].filter((p) => !(myDev.bid && p.dev && p.dev.bid === myDev.bid));
+  $("#peers").replaceChildren(...(inRoom ? [] : list.map(peerCard)));
+  $("#room-peers").replaceChildren(...(inRoom ? list.map(peerCard) : []));
+  $("#lan-steps").hidden = list.length > 0;
+  $("#room-empty").hidden = list.length > 0;
 }
 
 function renderMe() {
@@ -347,6 +356,32 @@ async function onSig(from, d) {
   }
 }
 
+// How the two devices are connected: same network, direct over the Internet, or through the TURN relay.
+function routeOf(c) {
+  if (!c.route) {
+    c.route = (async () => {
+      try {
+        const stats = await c.pc.getStats();
+        let pair;
+        stats.forEach((r) => {
+          if (r.type === "transport" && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+        });
+        if (!pair) stats.forEach((r) => r.type === "candidate-pair" && r.nominated && r.state === "succeeded" && (pair = r));
+        if (!pair) return null;
+        const l = stats.get(pair.localCandidateId);
+        const r = stats.get(pair.remoteCandidateId);
+        if (!l || !r) return null;
+        if (l.candidateType === "relay" || r.candidateType === "relay") return "relay";
+        return l.candidateType === "host" && r.candidateType === "host" ? "lan" : "direct";
+      } catch {
+        return null;
+      }
+    })();
+  }
+  return c.route;
+}
+const showRoute = (c, ui) => routeOf(c).then((k) => k && ui.route(k));
+
 function setupDC(pid, c, dc) {
   c.dc = dc;
   dc.binaryType = "arraybuffer";
@@ -384,6 +419,7 @@ function startSend(c, file) {
   if (c.tx || c.rx || isTransferOpen()) return setStatus(t("busyTx"), true);
   const ui = openTransfer({ dir: "out", name: file.name, size: file.size, type: file.type, peer: peers.get(c.pid) || { name: peerName(c.pid) } });
   ui.info(t("waitAccept", peerName(c.pid)));
+  showRoute(c, ui);
   const tx = { file, ui, cancelled: false, state: "wait" };
   c.tx = tx;
   ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"), true)]]);
@@ -503,6 +539,7 @@ function onChoosing(c) {
   if (c.rx || c.tx || isTransferOpen()) return;
   c.pre = openTransfer({ dir: "in", pending: true, peer: peers.get(c.pid) || { name: peerName(c.pid) } });
   c.pre.pending(t("choosing", peerName(c.pid)));
+  showRoute(c, c.pre);
   c.pre.acts([[t("close"), () => closePre(c)]]);
   c.preTimer = setTimeout(() => closePre(c), 120000); // give up if no file ever arrives
 }
@@ -527,6 +564,7 @@ function onOffer(c, m, send) {
     ui.setFile(meta);
   } else ui = openTransfer({ dir: "in", ...meta, peer: peers.get(c.pid) || { name: peerName(c.pid) } });
   ui.info(t("acceptHint"));
+  showRoute(c, ui);
   const rx = { name, size: m.size, type, ui, got: 0, w: null, pend: [], pendBytes: 0, chunks: [], accepted: false, accepting: false };
   rx.meter = mkMeter(ui, m.size);
   c.rx = rx;
