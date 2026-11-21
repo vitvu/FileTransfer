@@ -172,7 +172,7 @@ export function openTransfer(opts) {
       const el = q(".m-route");
       el.hidden = false;
       el.dataset.kind = kind;
-      el.textContent = t(kind === "relay" ? "routeRelay" : kind === "lan" ? "routeLan" : "routeDirect");
+      el.textContent = t(kind === "lan" ? "routeLan" : "routeDirect");
     },
     info(text) {
       q(".m-msg").textContent = text;

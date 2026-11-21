@@ -72,6 +72,25 @@ function showView(name) {
   $("#view-room").hidden = name !== "room";
 }
 
+// Compact network line: a short IPv6, a short provider name.
+const KNOWN_ISP = [
+  [/vietnam posts and telecom|vnpt|vinaphone/i, "VNPT"], [/viettel/i, "Viettel"], [/\bfpt\b/i, "FPT"], [/mobifone/i, "MobiFone"],
+  [/\bcmc\b/i, "CMC"], [/sctv/i, "SCTV"], [/vietnamobile/i, "Vietnamobile"], [/comcast/i, "Comcast"], [/at&t|att services/i, "AT&T"],
+  [/verizon/i, "Verizon"], [/t-mobile/i, "T-Mobile"], [/google/i, "Google"],
+];
+function shortIsp(s) {
+  for (const [re, name] of KNOWN_ISP) if (re.test(s)) return name;
+  s = s.split(/\s[-\u2013\u2014]\s|[(,:;]/)[0];
+  s = s.replace(/\b(corporation|corp|company|co|ltd|limited|inc|jsc|llc|joint stock|group|telecommunications|telecom|networks?|services?|provider|internet|iptv|ip tv|range|pool|address(es)?|and)\b\.?/gi, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  return s.length > 22 ? s.slice(0, 21) + "\u2026" : s;
+}
+function shortIp(ip) {
+  if (!ip.includes(":")) return ip;
+  const g = ip.split(":").filter(Boolean);
+  return g.length > 3 ? `${g[0]}:${g[1]}\u2026${g[g.length - 1]}` : ip;
+}
+
 function peerCard(p) {
   const card = document.createElement("div");
   card.className = "peer";
@@ -89,7 +108,8 @@ function peerCard(p) {
     // Only sent for code rooms (devices not necessarily on the same network): IP, ISP and country.
     const net = document.createElement("small");
     net.className = "net";
-    net.textContent = [p.net.ip, p.net.isp, p.net.cc].filter(Boolean).join(" · ");
+    net.textContent = [shortIp(p.net.ip), shortIsp(p.net.isp || ""), p.net.cc].filter(Boolean).join(" · ");
+    net.title = [p.net.ip, p.net.isp].filter(Boolean).join(" · ");
     who.append(net);
   }
   const btn = document.createElement("button");
@@ -172,13 +192,19 @@ $("#file").addEventListener("cancel", () => pickFor && stopChoosing(pickFor));
 
 function mkMeter(ui, total) {
   const t0 = performance.now();
-  let last = 0;
+  let last = t0;
+  let lastBytes = 0;
+  let speed = 0; // smoothed current speed in bytes/s
   const m = (bytes) => {
     const now = performance.now();
-    if (now - last < 150) return;
+    if (now - last < 250) return;
+    const inst = Math.max(0, bytes - lastBytes) / ((now - last) / 1000);
+    speed = speed ? speed * 0.6 + inst * 0.4 : inst;
     last = now;
+    lastBytes = bytes;
     ui.pct(total ? (bytes / total) * 100 : 100);
-    ui.info(`${fmt(bytes)} / ${fmt(total)} · ${fmt(bytes / ((now - t0) / 1000 || 1))}/s`);
+    const eta = speed > 1 ? Math.ceil((total - bytes) / speed) : 0;
+    ui.info(`${fmt(bytes)} / ${fmt(total)} · ${fmt(speed)}/s${eta > 1 ? " · " + (eta >= 60 ? Math.floor(eta / 60) + "m " + (eta % 60) + "s" : eta + "s") : ""}`);
   };
   m.avg = () => t("avg", fmt(total), fmt(total / ((performance.now() - t0) / 1000 || 1)));
   return m;
@@ -392,7 +418,15 @@ function routeOf(c) {
   }
   return c.route;
 }
-const showRoute = (c, ui) => routeOf(c).then((k) => k && ui.route(k));
+const showRoute = (c, ui) => routeOf(c).then((k) => k && k !== "relay" && ui.route(k));
+
+// A relayed link is closed as soon as it is idle: it frees the relay and stops its keep-alive traffic.
+function releaseRelay(c, ms) {
+  if (c.routeKind !== "relay") return;
+  setTimeout(() => {
+    if (conns.get(c.pid) === c && !c.tx && !c.rx && !c.pre) closeConn(c.pid);
+  }, ms);
+}
 
 function setupDC(pid, c, dc) {
   c.dc = dc;
@@ -459,6 +493,7 @@ function cancelTx(c, notify, msg, silent) {
   if (notify && c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "cancel" }));
   if (silent) tx.ui.close();
   else tx.ui.end("fail", msg);
+  releaseRelay(c, 600);
 }
 
 function drain(dc) {
@@ -481,6 +516,12 @@ async function runSend(c) {
   const meter = mkMeter(tx.ui, file.size);
   tx.meterAvg = meter.avg;
   tx.ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"), true)]]);
+  // On a relay keep the send buffer small: progress stays truthful and a cancel does not leave megabytes of
+  // already-queued data to crawl through the (limited) relay.
+  const relayed = c.routeKind === "relay";
+  const high = relayed ? 256 * 1024 : HIGH;
+  dc.bufferedAmountLowThreshold = relayed ? 64 * 1024 : LOW;
+  let sent = 0;
   try {
     let off = 0;
     let next = file.size ? file.slice(0, BLOCK).arrayBuffer() : null;
@@ -490,13 +531,16 @@ async function runSend(c) {
       next = off < file.size ? file.slice(off, off + BLOCK).arrayBuffer() : null; // prefetch the next block
       for (let o = 0; o < block.byteLength; o += CHUNK) {
         if (tx.cancelled || dc.readyState !== "open") return;
-        while (dc.bufferedAmount > HIGH) {
+        while (dc.bufferedAmount > high) {
           await drain(dc);
           if (tx.cancelled || dc.readyState !== "open") return;
+          meter(Math.max(0, sent - dc.bufferedAmount));
         }
-        dc.send(new Uint8Array(block, o, Math.min(CHUNK, block.byteLength - o)));
+        const n = Math.min(CHUNK, block.byteLength - o);
+        dc.send(new Uint8Array(block, o, n));
+        sent += n;
+        meter(Math.max(0, sent - dc.bufferedAmount)); // what has really left, not what is merely queued
       }
-      meter(off - dc.bufferedAmount);
     }
     if (tx.cancelled) return;
     dc.send(JSON.stringify({ t: "done" })); // the channel is ordered, so "done" arrives after every chunk
@@ -543,6 +587,7 @@ function onData(c, data) {
         c.tx.ui.pct(100);
         c.tx.ui.end("done", t("done", c.tx.meterAvg ? c.tx.meterAvg() : ""));
         c.tx = null;
+        releaseRelay(c, 3000);
       }
       break;
     case "cancel":
@@ -675,6 +720,7 @@ async function finishRx(c, send) {
     rx.ui.pct(100);
     rx.ui.end("done", t("done", rx.meter.avg()));
     send({ t: "ok" });
+    releaseRelay(c, 3000);
   } catch (e) {
     abortRx(c, true, t("errPrefix", e.message));
   }
@@ -689,6 +735,7 @@ function abortRx(c, notify, msg, silent) {
   if (notify && c.dc && c.dc.readyState === "open") c.dc.send(JSON.stringify({ t: "cancel" }));
   if (silent) rx.ui.close();
   else rx.ui.end("fail", msg);
+  releaseRelay(c, 600);
 }
 
 // ---------------- views, room code input, language ----------------
