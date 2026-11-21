@@ -46,6 +46,8 @@ npx wrangler secret put TURN_KEY_ID
 npx wrangler secret put TURN_KEY_API_TOKEN
 ```
 
+**No card? Free alternative:** create an app at [Metered Open Relay](https://www.metered.ca/tools/openrelay/) (the 500 MB plan needs no card), add a credential, then set the secrets `METERED_APP` (the part before `.metered.live`) and `METERED_API_KEY` (the credential's API key) instead.
+
 Relayed data stays end-to-end encrypted (DTLS); the relay only sees ciphertext. Without these secrets the app uses STUN only.
 
 ## 3. Automatic deploys (optional)
