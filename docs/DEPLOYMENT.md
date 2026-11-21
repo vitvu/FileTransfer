@@ -34,7 +34,21 @@ Remove the `routes` line, set `workers_dev = true`, and put the URL that Wrangle
 
 > The `workers.dev` hostname contains your Cloudflare account subdomain. If you would rather not publish it, use Option A or rename the subdomain in the dashboard.
 
-## 2. Automatic deploys (optional)
+## 2. TURN relay (needed for devices on different networks)
+
+Devices on the same network connect directly. Across networks, many connections (mobile data, corporate or carrier NAT) cannot be made directly and need a relay (TURN), otherwise the transfer times out. The Worker serves short-lived credentials on `/ice` from [Cloudflare Realtime TURN](https://developers.cloudflare.com/realtime/turn/) (free tier: 1 TB/month).
+
+1. Dashboard → **Realtime → TURN Server → Create**. Note the *TURN Token ID* and *API Token*.
+2. Store them as Worker secrets:
+
+```bash
+npx wrangler secret put TURN_KEY_ID
+npx wrangler secret put TURN_KEY_API_TOKEN
+```
+
+Relayed data stays end-to-end encrypted (DTLS); the relay only sees ciphertext. Without these secrets the app uses STUN only.
+
+## 3. Automatic deploys (optional)
 
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) deploys on every push to `main`. It does nothing until you add two repository secrets (**Settings → Secrets and variables → Actions**):
 
@@ -43,7 +57,7 @@ Remove the `routes` line, set `workers_dev = true`, and put the URL that Wrangle
 | `CLOUDFLARE_API_TOKEN` | API token from the *Edit Cloudflare Workers* template |
 | `CLOUDFLARE_ACCOUNT_ID` | Your account id (dashboard sidebar) |
 
-## 3. Hosting the UI somewhere else (optional)
+## 4. Hosting the UI somewhere else (optional)
 
 The files in `public/` work on any static host (Cloudflare Pages, GitHub Pages, Netlify, cPanel). Deploy the Worker as above, add the site's origin to `ALLOWED_ORIGINS`, and set `signalingUrl` in [`public/config.js`](../public/config.js) to `wss://<worker-host>/ws`. cPanel cannot run the signaling server itself, because it does not support WebSocket servers.
 

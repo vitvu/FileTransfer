@@ -14,6 +14,18 @@ const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
 const STREAM_MIN = 200 * 1024 * 1024; // only files above this ask where to save (streamed to disk); smaller ones download directly
 const CONNECT_TIMEOUT = 15000;
 const ICE = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] };
+// Ask the Worker for TURN relay credentials (needed when the two devices are on different networks).
+async function loadIce() {
+  try {
+    const base = (window.FILETRANSFER_CONFIG?.signalingUrl) || "";
+    const url = base ? base.replace(/^ws/, "http").replace(/\/ws$/, "/ice") : "/ice";
+    const r = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(2500) });
+    const d = await r.json();
+    if (Array.isArray(d.iceServers) && d.iceServers.length) ICE.iceServers = d.iceServers;
+  } catch {}
+}
+await loadIce();
+setInterval(loadIce, 3 * 3600 * 1000);
 
 const $ = (s) => document.querySelector(s);
 const safeName = (s) => String(s || "").replace(/[\\/:*?"<>|\x00-\x1f]/g, "_").slice(0, 200) || "file";

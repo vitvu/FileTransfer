@@ -72,12 +72,41 @@ const ANIMALS = ["Fox", "Cat", "Dog", "Tiger", "Bear", "Rabbit", "Wolf", "Owl", 
 const COLORS = ["Blue", "Red", "Gold", "Purple", "Orange", "Pink", "Brown", "Teal", "Green", "Silver"];
 const pick = (a) => a[crypto.getRandomValues(new Uint32Array(1))[0] % a.length];
 
+// Short-lived TURN credentials (Cloudflare Realtime TURN). Peers on different networks often cannot connect
+// directly (mobile carriers, corporate NAT), so the data is relayed, still end-to-end encrypted by DTLS.
+// Without the TURN_KEY_ID / TURN_KEY_API_TOKEN secrets this returns STUN only.
+async function iceServers(request, url, env) {
+  const stun = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+  const json = (servers) =>
+    new Response(JSON.stringify({ iceServers: servers }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
+  const origin = request.headers.get("Origin");
+  if (origin && !originAllowed(origin, url, env)) return new Response("Forbidden", { status: 403 });
+  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return json(stun);
+  if (env.WS_LIMITER) {
+    const { success } = await env.WS_LIMITER.limit({ key: lanKey(request.headers.get("CF-Connecting-IP")) });
+    if (!success) return json(stun);
+  }
+  try {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl: 6 * 3600 }),
+    });
+    if (!r.ok) return json(stun);
+    const data = await r.json();
+    return json(Array.isArray(data.iceServers) && data.iceServers.length ? data.iceServers : stun);
+  } catch {
+    return json(stun);
+  }
+}
+
 // ---------- Worker (entry point) ----------
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname !== "/ws" || request.headers.get("Upgrade") !== "websocket") {
+    if (url.pathname === "/ice") return iceServers(request, url, env);
+    if (url.pathname !== "/ws"|| request.headers.get("Upgrade") !== "websocket") {
       return new Response("Not found", { status: 404 });
     }
     // Only the configured web origins (or same-origin, for local dev) may use this signaling server.
