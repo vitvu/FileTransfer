@@ -190,8 +190,10 @@ $("#file").onchange = (e) => {
 };
 $("#file").addEventListener("cancel", () => pickFor && stopChoosing(pickFor));
 
-function mkMeter(ui, total) {
+function mkMeter(ui, total, c) {
   const t0 = performance.now();
+  let slowSince = 0;
+  let noteAt = 0;
   let last = t0;
   let lastBytes = 0;
   let speed = 0; // smoothed current speed in bytes/s
@@ -202,6 +204,14 @@ function mkMeter(ui, total) {
     speed = speed ? speed * 0.6 + inst * 0.4 : inst;
     last = now;
     lastBytes = bytes;
+    // A link that crawls (under 150 KB/s for 6 s) gets a one-line explanation of what it is made of.
+    if (c && bytes > 256 * 1024 && speed < 150 * 1024) {
+      slowSince = slowSince || now;
+      if (now - slowSince > 6000 && now - noteAt > 5000) {
+        noteAt = now;
+        linkInfo(c).then((s) => s && ui.note(`${t("slowLink")}: ${s}`));
+      }
+    } else slowSince = 0;
     ui.pct(total ? (bytes / total) * 100 : 100);
     const eta = speed > 1 ? Math.ceil((total - bytes) / speed) : 0;
     ui.info(`${fmt(bytes)} / ${fmt(total)} · ${fmt(speed)}/s${eta > 1 ? " · " + (eta >= 60 ? Math.floor(eta / 60) + "m " + (eta % 60) + "s" : eta + "s") : ""}`);
@@ -418,6 +428,25 @@ function routeOf(c) {
   }
   return c.route;
 }
+// "relay/srflx · tls · 140 ms": candidate types, transport and round-trip time of the link in use.
+async function linkInfo(c) {
+  try {
+    const stats = await c.pc.getStats();
+    let pair;
+    stats.forEach((r) => {
+      if (r.type === "transport" && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+    });
+    if (!pair) return "";
+    const l = stats.get(pair.localCandidateId) || {};
+    const r = stats.get(pair.remoteCandidateId) || {};
+    const proto = l.candidateType === "relay" ? l.relayProtocol || l.protocol : l.protocol;
+    const rtt = pair.currentRoundTripTime ? Math.round(pair.currentRoundTripTime * 1000) + " ms" : "";
+    return [`${l.candidateType || "?"}/${r.candidateType || "?"}`, proto, l.networkType, rtt].filter(Boolean).join(" \u00b7 ");
+  } catch {
+    return "";
+  }
+}
+
 const showRoute = (c, ui) => routeOf(c).then((k) => k && k !== "relay" && ui.route(k));
 
 // A relayed link is closed as soon as it is idle: it frees the relay and stops its keep-alive traffic.
@@ -513,7 +542,7 @@ async function runSend(c) {
   const dc = c.dc;
   const file = tx.file;
   tx.state = "send";
-  const meter = mkMeter(tx.ui, file.size);
+  const meter = mkMeter(tx.ui, file.size, c);
   tx.meterAvg = meter.avg;
   tx.ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"), true)]]);
   // On a relay keep the send buffer small: progress stays truthful and a cancel does not leave megabytes of
@@ -635,7 +664,7 @@ function onOffer(c, m, send) {
   ui.info(t("acceptHint"));
   showRoute(c, ui);
   const rx = { name, size: m.size, type, ui, got: 0, w: null, pend: [], pendBytes: 0, chunks: [], accepted: false, accepting: false };
-  rx.meter = mkMeter(ui, m.size);
+  rx.meter = mkMeter(ui, m.size, c);
   c.rx = rx;
   ui.acts([
     [t("accept"), () => acceptRx(c, rx, send), true],

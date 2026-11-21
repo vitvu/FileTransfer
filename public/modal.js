@@ -168,6 +168,12 @@ export function openTransfer(opts) {
       q(".bar i").style.width = p.toFixed(1) + "%";
       q(".m-pct").textContent = Math.floor(p) + "%";
     },
+    note(text) {
+      const el = q(".m-route");
+      el.hidden = false;
+      el.dataset.kind = "relay"; // amber dot
+      el.textContent = text;
+    },
     route(kind) {
       const el = q(".m-route");
       el.hidden = false;
