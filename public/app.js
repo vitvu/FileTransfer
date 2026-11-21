@@ -12,7 +12,7 @@ const HIGH = 8 * 1024 * 1024; // pause sending above this much queued data (back
 const LOW = 2 * 1024 * 1024; // resume sending when the queue drops below this
 const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
 const STREAM_MIN = 200 * 1024 * 1024; // only files above this ask where to save (streamed to disk); smaller ones download directly
-const CONNECT_TIMEOUT = 15000;
+const CONNECT_TIMEOUT = 30000;
 const ICE = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] };
 // Ask the Worker for TURN relay credentials (needed when the two devices are on different networks).
 async function loadIce() {
