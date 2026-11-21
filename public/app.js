@@ -13,6 +13,7 @@ const LOW = 2 * 1024 * 1024; // resume sending when the queue drops below this
 const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
 const STREAM_MIN = 200 * 1024 * 1024; // only files above this ask where to save (streamed to disk); smaller ones download directly
 const CONNECT_TIMEOUT = 30000;
+const RELAY_MAX = 25 * 1024 * 1024; // files sent through the TURN relay (different networks) are limited to 25 MB
 const ICE = { iceServers: [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }] };
 // Ask the Worker for TURN relay credentials (needed when the two devices are on different networks).
 async function loadIce() {
@@ -371,8 +372,8 @@ function routeOf(c) {
         const l = stats.get(pair.localCandidateId);
         const r = stats.get(pair.remoteCandidateId);
         if (!l || !r) return null;
-        if (l.candidateType === "relay" || r.candidateType === "relay") return "relay";
-        return l.candidateType === "host" && r.candidateType === "host" ? "lan" : "direct";
+        if (l.candidateType === "relay" || r.candidateType === "relay") return (c.routeKind = "relay");
+        return (c.routeKind = l.candidateType === "host" && r.candidateType === "host" ? "lan" : "direct");
       } catch {
         return null;
       }
@@ -389,6 +390,7 @@ function setupDC(pid, c, dc) {
   dc.onopen = () => {
     clearTimeout(c.timer);
     c.opened = true;
+    routeOf(c); // learn early whether this link is direct or relayed
     if (c.choosing) dc.send(JSON.stringify({ t: "choosing", on: true }));
     const f = queued.get(pid);
     if (f) {
@@ -424,7 +426,9 @@ function startSend(c, file) {
   c.tx = tx;
   ui.acts([[t("cancel"), () => cancelTx(c, true, t("canceled"), true)]]);
   // Send the offer together with a small preview when the file is an image.
-  makeThumb(file).then((thumb) => {
+  Promise.all([makeThumb(file), routeOf(c)]).then(([thumb, route]) => {
+    if (tx.cancelled) return;
+    if (route === "relay" && file.size > RELAY_MAX) return cancelTx(c, false, t("relayLimit", fmt(RELAY_MAX))); // too big for the relay
     if (thumb) ui.setThumb(thumb);
     if (!tx.cancelled && c.dc && c.dc.readyState === "open") {
       c.dc.send(JSON.stringify({ t: "offer", name: file.name, size: file.size, type: file.type, thumb: thumb || undefined }));
@@ -551,6 +555,7 @@ function closePre(c) {
 }
 
 function onOffer(c, m, send) {
+  if (c.routeKind === "relay" && m.size > RELAY_MAX) return send({ t: "reject" }); // the relay only carries small files
   const waiting = c.pre; // the popup that has been waiting for this very file, if any
   if (c.rx || c.tx || (isTransferOpen() && !waiting) || typeof m.size !== "number" || m.size < 0 || m.size > MAX_SIZE) return send({ t: "reject" });
   const name = safeName(m.name);

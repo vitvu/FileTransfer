@@ -83,7 +83,7 @@ Free on Cloudflare, no credit card: `npx wrangler login && npm run deploy`. Set 
 | Chrome, Edge (desktop) | ✅ | ✅ downloads directly; files over 200 MB ask where to save and stream to disk |
 | Firefox, Safari, mobile | ✅ | ✅ buffered in memory, then downloaded |
 
-- **Relay is optional and limited.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) cannot connect directly. Configure a TURN relay ([see the deployment guide](docs/DEPLOYMENT.md)) so those transfers still work; relayed data stays end-to-end encrypted. Free relay plans have a small monthly quota.
+- **Relay is optional and limited.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) cannot connect directly. Configure a TURN relay ([see the deployment guide](docs/DEPLOYMENT.md)) so those transfers still work; relayed data stays end-to-end encrypted. Free relay plans have a small monthly quota. To protect that quota, files that have to go through the relay (devices on different, strict networks) are limited to **25 MB**; direct connections keep the full 1 GB.
 - **One file at a time** per pair of devices, **1 GB** per file.
 - **"Nearby" means "same public IP".** Behind a VPN or proxy, use a room code instead.
 - **Speed depends on the browsers and network.** Expect tens of MB/s on a good local network, not line rate.
