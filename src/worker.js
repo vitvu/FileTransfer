@@ -81,12 +81,20 @@ async function iceServers(request, url, env) {
     new Response(JSON.stringify({ iceServers: servers }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
   const origin = request.headers.get("Origin");
   if (origin && !originAllowed(origin, url, env)) return new Response("Forbidden", { status: 403 });
-  if (!env.TURN_KEY_ID || !env.TURN_KEY_API_TOKEN) return json(stun);
+  const cf = env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN;
+  const metered = env.METERED_APP && env.METERED_API_KEY; // free alternative: https://www.metered.ca/tools/openrelay/
+  if (!cf && !metered) return json(stun);
   if (env.WS_LIMITER) {
     const { success } = await env.WS_LIMITER.limit({ key: lanKey(request.headers.get("CF-Connecting-IP")) });
     if (!success) return json(stun);
   }
   try {
+    if (!cf) {
+      const r = await fetch(`https://${encodeURIComponent(env.METERED_APP)}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(env.METERED_API_KEY)}`);
+      if (!r.ok) return json(stun);
+      const list = await r.json();
+      return json(Array.isArray(list) && list.length ? [...stun, ...list] : stun);
+    }
     const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
       method: "POST",
       headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, "Content-Type": "application/json" },
