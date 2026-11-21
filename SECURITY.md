@@ -20,7 +20,7 @@ You can expect an acknowledgement within a few days. Please allow reasonable tim
 
 In scope: the web app, the signaling Worker, and the deployment configuration in this repository.
 
-Out of scope: vulnerabilities in browsers, Cloudflare, GitHub, or STUN/TURN infrastructure; denial of service through raw traffic volume; and the fact that a 6-digit room code is guessable (a documented limitation: the receiver must still approve every file).
+Out of scope: vulnerabilities in browsers, Cloudflare, GitHub, or STUN infrastructure; denial of service through raw traffic volume; and the fact that a 6-digit room code is guessable (a documented limitation: the receiver must still approve every file).
 
 ## Design notes relevant to security
 

@@ -7,7 +7,7 @@ compatibility_date = "2026-10-31"
 
 [assets]
 directory = "./public"
-run_worker_first = ["/ws", "/ice"]
+run_worker_first = ["/ws"]
 
 [[durable_objects.bindings]]
 name = "ROOMS"

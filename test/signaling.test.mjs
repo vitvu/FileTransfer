@@ -9,11 +9,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 function open(qs) {
   return new Promise((res) => {
     const ws = new WebSocket(`${BASE}/ws?${qs}`);
+    ws.binaryType = "arraybuffer";
     const q = [];
     let wake;
     ws.onmessage = (e) => {
       if (e.data === "pong") return;
-      q.push(JSON.parse(e.data));
+      q.push(typeof e.data === "string" ? JSON.parse(e.data) : { t: "bin", n: e.data.byteLength });
       wake && wake();
     };
     const o = {
@@ -87,5 +88,28 @@ const h = await open(`kind=join&code=${hc.code}`);
 await sleep(400);
 ok(h.closed === null, "Room: an empty room stays joinable until it expires (10 min)");
 h.close();
+
+// --- Relay (fallback for devices that cannot connect directly): granted per session, limited per IP
+const rc = await open("kind=create");
+const rh = await rc.next("hello");
+const rd = await open(`kind=join&code=${rh.code}`);
+await rd.next("hello");
+const got = (o, type) => o.next(type).then(() => true, () => false);
+rd.ws.send(new Uint8Array(100)); // no relay session granted yet
+ok(!(await got(rc, "bin")), "Relay: frames are dropped until a session is granted");
+rc.ws.send(JSON.stringify({ t: "rly-start" }));
+await rc.next("join");
+const first = (await rc.next()).t; // rly-ok, or rly-no when this IP started a session in the last 30 s
+if (first === "rly-ok") {
+  rc.ws.send(new Uint8Array(1000));
+  const fwd = await rd.next("bin");
+  ok(fwd.n === 1000, "Relay: a granted session forwards frames to the other device");
+} else console.log("SKIP Relay forwarding (a session was already started from this IP in the last 30 s)");
+rc.ws.send(JSON.stringify({ t: "rly-end" }));
+rc.ws.send(JSON.stringify({ t: "rly-start" }));
+const again = await rc.next("rly-no");
+ok(again.why === "throttled", "Relay: a second session from the same IP within 30 s is refused");
+rc.close();
+rd.close();
 
 process.exit(fails ? 1 : 0);

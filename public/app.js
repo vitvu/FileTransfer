@@ -3,6 +3,7 @@
 // (a Cloudflare Worker) only relays small handshake messages and never sees file contents.
 import { t, applyStatic, getLang, setLang } from "./i18n.js";
 import { describeDevice, deviceParams, deviceLabel, deviceIcon } from "./device.js";
+import { newKeyPair, deriveKey, RelayChannel } from "./relay.js";
 import { openTransfer, makeThumb, validThumb, isTransferOpen, fmt } from "./modal.js";
 
 const MAX_SIZE = 1024 ** 3; // 1 GiB
@@ -13,21 +14,10 @@ const LOW = 2 * 1024 * 1024; // resume sending when the queue drops below this
 const FLUSH = 1024 * 1024; // receiver batches 1 MB before each disk write
 const STREAM_MIN = 200 * 1024 * 1024; // only files above this ask where to save (streamed to disk); smaller ones download directly
 const CONNECT_TIMEOUT = 30000;
-const RELAY_MAX = 25 * 1024 * 1024; // files sent through the TURN relay (different networks) are limited to 25 MB
+const RELAY_MAX = 25 * 1024 * 1024; // files sent through the relay (devices that cannot connect directly) are limited to 25 MB
 const STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
 const RELAY_GAP = 30 * 1000; // at most one file through the relay every 30 s
-// Relay (TURN) credentials are requested per connection, and only for code rooms (the devices of a same-network
-// group share an IP and connect directly). The Worker limits grants per IP and per day; see src/worker.js.
-async function iceFor(wantRelay) {
-  if (!wantRelay) return { servers: STUN, relay: "off" };
-  try {
-    const base = window.FILETRANSFER_CONFIG?.signalingUrl || "";
-    const url = (base ? base.replace(/^ws/, "http").replace(/\/ws$/, "/ice") : "/ice") + "?relay=1";
-    const d = await (await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(4000) })).json();
-    if (Array.isArray(d.iceServers) && d.iceServers.length) return { servers: d.iceServers, relay: d.relay };
-  } catch {}
-  return { servers: STUN, relay: "off" };
-}
+const RELAY_AFTER = 12000; // no direct connection after 12 s: fall back to the (encrypted) relay, code rooms only
 let lastRelayAt = Number(sessionStorage.getItem("ft-relay-at")) || 0;
 const relayWait = () => Math.max(0, Math.ceil((lastRelayAt + RELAY_GAP - Date.now()) / 1000));
 const markRelay = () => (lastRelayAt = Date.now(), sessionStorage.setItem("ft-relay-at", String(lastRelayAt)));
@@ -253,8 +243,10 @@ function connect(kind, code) {
   sock.onopen = () => {
     pingTimer = setInterval(() => sock.readyState === 1 && sock.send("ping"), 30000);
   };
+  sock.binaryType = "arraybuffer";
   sock.onmessage = (e) => {
     if (gen !== session || e.data === "pong") return;
+    if (typeof e.data !== "string") return relayIn(e.data); // an encrypted relay frame from the other device
     let m;
     try {
       m = JSON.parse(e.data);
@@ -297,6 +289,7 @@ function sig(to, data) {
 }
 
 function onSignal(m) {
+  if (m.t === "rly-ok" || m.t === "rly-no") return onRelayReply(m);
   if (m.t === "hello") {
     me = { id: m.id, name: m.name };
     peers.clear();
@@ -324,32 +317,28 @@ function onSignal(m) {
 // ---------------- WebRTC ----------------
 function mkConn(pid, initiator) {
   const pc = new RTCPeerConnection({ iceServers: STUN });
-  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0, opened: false, choosing: false, pre: null, preTimer: 0, relayState: "off", ice: null };
-  // Fetch relay credentials (rooms only) before the first offer / answer is created, so candidates include the relay.
-  c.ice = iceFor(mode === "room").then(({ servers, relay }) => {
-    c.relayState = relay;
-    if (relay === "ok") pc.setConfiguration({ iceServers: servers });
-  });
+  const c = { pid, pc, initiator, dc: null, cand: [], remoteSet: false, tx: null, rx: null, timer: 0, opened: false, choosing: false, pre: null, preTimer: 0, relay: null, relayCh: null, rlyQ: [], peerPub: "", rlyTimer: 0 };
+  if (mode === "room") c.rlyTimer = setTimeout(() => startRelay(c), RELAY_AFTER);
   conns.set(pid, c);
   pc.onicecandidate = (e) => e.candidate && sig(pid, { c: e.candidate });
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === "failed" && conns.get(pid) === c) {
       // Only an error if we never managed to connect. A link that worked and later went away (the other
       // tab was closed, the phone went to sleep) is dropped silently and re-created on the next send.
-      if (!c.opened) setStatus(t(c.relayState === "throttled" || c.relayState === "full" ? "relayBusy" : "p2pFail"), true);
+      if (!c.opened && mode === "room") return startRelay(c); // no direct path: use the relay
+      if (!c.opened) setStatus(t("p2pFail"), true);
       closeConn(pid);
     }
   };
   c.timer = setTimeout(() => {
     if (conns.get(pid) === c && !(c.dc && c.dc.readyState === "open")) {
-      setStatus(t(c.relayState === "throttled" || c.relayState === "full" ? "relayBusy" : "p2pTimeout"), true);
+      setStatus(t("p2pTimeout"), true);
       closeConn(pid);
     }
   }, CONNECT_TIMEOUT);
   if (initiator) {
     setupDC(pid, c, pc.createDataChannel("f"));
-    c.ice
-      .then(() => pc.createOffer())
+    pc.createOffer()
       .then((o) => pc.setLocalDescription(o))
       .then(() => sig(pid, { sdp: pc.localDescription }))
       .catch((e) => console.warn(e));
@@ -365,12 +354,76 @@ function closeConn(pid) {
   conns.delete(pid);
   clearTimeout(c.timer);
   queued.delete(pid);
+  clearTimeout(c.rlyTimer);
   closePre(c);
   cancelTx(c, false, t("lostConn"));
   abortRx(c, false, t("lostConn"));
+  if (c.relayCh) c.relayCh.close();
   try {
     c.pc.close();
   } catch {}
+}
+
+// ---------------- relay fallback ----------------
+// Used only in code rooms, when no direct connection could be made. The Worker grants (or refuses) a session,
+// the devices agree on a key (ECDH over the signaling channel) and then talk through encrypted frames.
+function startRelay(c) {
+  if (c.relay || c.opened || mode !== "room" || !ws || ws.readyState !== 1 || conns.get(c.pid) !== c) return;
+  c.relay = { granted: false, priv: null, sent: false, deriving: false };
+  setStatus(t("relayConnecting"));
+  ws.send(JSON.stringify({ t: "rly-start" }));
+}
+
+async function onRelayReply(m) {
+  const c = [...conns.values()].find((x) => x.relay);
+  if (m.t === "rly-no") {
+    if (!c) return;
+    // "limit" while sending: the session's byte budget ran out
+    if (c.relayCh) return closeConn(c.pid);
+    setStatus(t(m.why === "throttled" || m.why === "full" ? "relayBusy" : "p2pFail"), true);
+    return closeConn(c.pid);
+  }
+  if (!c || c.relay.granted) return;
+  c.relay.granted = true;
+  const kp = await newKeyPair();
+  c.relay.priv = kp.priv;
+  c.relay.sent = true;
+  sig(c.pid, { rk: kp.pub }); // our public key, always sent before any relayed frame
+  tryOpenRelay(c);
+}
+
+async function tryOpenRelay(c) {
+  const r = c.relay;
+  if (!r || !r.sent || !c.peerPub || r.deriving || c.relayCh || conns.get(c.pid) !== c) return;
+  r.deriving = true;
+  try {
+    const key = await deriveKey(r.priv, c.peerPub);
+    if (conns.get(c.pid) !== c) return;
+    clearTimeout(c.rlyTimer);
+    c.pc.onconnectionstatechange = null;
+    if (c.dc) c.dc.onclose = c.dc.onmessage = c.dc.onopen = null; // the abandoned direct channel must not close us
+    try {
+      c.pc.close();
+    } catch {}
+    const ch = new RelayChannel(key, () => ws, () => ws && ws.readyState === 1 && ws.send(JSON.stringify({ t: "rly-end" })));
+    c.relayCh = ch;
+    c.routeKind = "relay";
+    c.route = Promise.resolve("relay");
+    setupDC(c.pid, c, ch);
+    ch.onopen(); // marks the connection as open and starts any queued file
+    for (const f of c.rlyQ.splice(0)) ch.receive(f); // frames that arrived while the key was being derived
+    setStatus("");
+  } catch (e) {
+    console.warn(e);
+    closeConn(c.pid);
+  }
+}
+
+function relayIn(buf) {
+  const c = [...conns.values()].find((x) => x.relay);
+  if (!c) return;
+  if (c.relayCh) c.relayCh.receive(buf);
+  else c.rlyQ.push(buf);
 }
 
 async function onSig(from, d) {
@@ -389,7 +442,6 @@ async function onSig(from, d) {
         if (f) queued.set(from, f);
       }
       c = mkConn(from, false);
-      await c.ice;
       await c.pc.setRemoteDescription(d.sdp);
       await flush();
       await c.pc.setLocalDescription(await c.pc.createAnswer());
@@ -398,14 +450,20 @@ async function onSig(from, d) {
       await c.pc.setRemoteDescription(d.sdp);
       await flush();
     }
+  } else if (d.rk) {
+    if (!c || c.opened || typeof d.rk !== "string" || d.rk.length > 200) return;
+    c.peerPub = d.rk;
+    if (!c.relay) startRelay(c); // the other device went to the relay: follow it
+    else tryOpenRelay(c);
   } else if (d.c && c) {
     if (c.remoteSet) c.pc.addIceCandidate(d.c).catch(() => {});
     else c.cand.push(d.c);
   }
 }
 
-// How the two devices are connected: same network, direct over the Internet, or through the TURN relay.
+// How the two devices are connected: same network, direct over the Internet, or through the Worker relay.
 function routeOf(c) {
+  if (c.relayCh) return Promise.resolve("relay");
   if (!c.route) {
     c.route = (async () => {
       try {
@@ -430,6 +488,7 @@ function routeOf(c) {
 }
 // "relay/srflx · tls · 140 ms": candidate types, transport and round-trip time of the link in use.
 async function linkInfo(c) {
+  if (c.relayCh) return "relay";
   try {
     const stats = await c.pc.getStats();
     let pair;
@@ -463,6 +522,7 @@ function setupDC(pid, c, dc) {
   dc.bufferedAmountLowThreshold = LOW;
   dc.onopen = () => {
     clearTimeout(c.timer);
+    clearTimeout(c.rlyTimer);
     c.opened = true;
     routeOf(c); // learn early whether this link is direct or relayed
     if (c.choosing) dc.send(JSON.stringify({ t: "choosing", on: true }));

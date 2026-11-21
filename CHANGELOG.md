@@ -17,10 +17,10 @@ All notable changes to this project are documented here. The format follows [Kee
 - Cloudflare Worker + Durable Object signaling server with an origin allow-list and no logging.
 - Home page with a 6-box room-code entry next to same-network discovery, plus step-by-step hints.
 - Shareable room links (`/#123456`); the code is removed from the address bar after joining.
-- Relay for devices on different strict networks (TURN, Cloudflare or Metered), with sparing limits: code rooms only, 25 MB per file, one file per 30 s per device and per IP, daily cap on relay sessions, credentials only from the Worker's secrets.
+- Relay fallback for code rooms when no direct connection is possible (strict NAT on both sides): encrypted in the browsers (AES-GCM, ECDH) and forwarded by the Worker, with sparing limits: 25 MB per file, one file per 30 s per device and per IP, a byte budget per session and a daily cap on sessions. No external service or API key.
 - Truthful progress on both devices: what has really left the sender (not what is queued), a smoothed current speed and the time left, updated several times a second. Over the relay the send buffer is small, so cancelling does not waste relay bandwidth, and a relayed link is closed as soon as it is idle.
 - Compact network line: shortened IPv6, tidy provider names (FPT, Viettel, VNPT...). The transfer popup only says "Direct" when the link is direct.
-- Device details: OS and browser versions (Windows 11 · Chrome 130), IP address and network provider of the other device in code rooms, a "direct / via relay" line in the transfer popup, and tabs of one browser no longer appear as separate devices.
+- Device details: OS and browser versions (Windows 11 · Chrome 130), IP address and network provider of the other device in code rooms, a "Direct" line in the transfer popup, and tabs of one browser no longer appear as separate devices.
 - Device label and OS icon next to each nearby device (iPhone · Safari, Windows · Chrome, Pixel 7 · Chrome), validated server-side.
 - Device detection cross-checks User-Agent Client Hints, touch support and screen size, so Android / iPhone in "request desktop site" mode are not mislabeled as Windows / Mac.
 - English and Vietnamese UI picked from the browser language (switchable); light theme by default with a dark-mode button; strict Content Security Policy.

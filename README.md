@@ -50,7 +50,7 @@ The web app (`public/`) is static. A single Cloudflare Worker with a Durable Obj
 
 ## Privacy
 
-- **File contents never reach the Worker or any server.**
+- **File contents never reach any server in readable form.** Direct transfers go straight between the browsers. Only on the relay fallback do encrypted frames pass through the Worker; it cannot read them, although it could in theory swap the encryption keys (the devices do not verify each other out of band), so use direct connections for anything sensitive.
 - **The Worker sees** your IP (to group devices on one network), a random id and name, your coarse device info, and the handshake messages it relays. Nothing is stored or logged; the only persisted state is a "room is active" flag that expires 10 minutes after the room empties.
 - **The receiver sees** a small preview (a JPEG thumbnail of about 15-35 KB) of an image *before* accepting it, plus your device label. They also see that you are choosing a file.
 - **Other parties see** your IP: WebRTC shows it to the device you connect to and to the STUN servers (Cloudflare and Google). The device you connect to also sees your OS, browser and their versions, for example *iPhone (iOS 17.5) · Safari 17*. In a code room, the other device also sees your public IP address, network provider and country (that is the point of the code: you are choosing to connect to them).
@@ -83,10 +83,10 @@ Free on Cloudflare, no credit card: `npx wrangler login && npm run deploy`. Set 
 | Chrome, Edge (desktop) | ✅ | ✅ downloads directly; files over 200 MB ask where to save and stream to disk |
 | Firefox, Safari, mobile | ✅ | ✅ buffered in memory, then downloaded |
 
-- **Relay is optional and limited.** Strict networks (symmetric NAT, some corporate Wi-Fi or mobile carriers) cannot connect directly. A TURN relay ([deployment guide](docs/DEPLOYMENT.md)) lets those transfers work; relayed data stays end-to-end encrypted. Because relay bandwidth is a shared free resource, the app is deliberately strict with it:
+- **Relay fallback (code rooms only).** Strict networks (symmetric NAT on both sides, some corporate Wi-Fi or mobile carriers) cannot connect directly. If there is no direct connection after 12 seconds, the two devices switch to a relay through the Cloudflare Worker. The file is encrypted in the browsers (AES-GCM, with a key agreed through an ephemeral ECDH exchange), so the Worker only forwards ciphertext and stores nothing. The relay is a shared free resource, so it is deliberately strict:
   - Direct connections (same Wi-Fi, IPv6, ordinary NAT) are never limited: up to **1 GB** per file.
-  - Through the relay (code rooms only): **25 MB per file**, **one file every 30 seconds** per device and per IP address, and a daily cap on relay sessions for everyone (150 by default, `RELAY_DAILY_MAX`).
-  - Sizing: about 10 people a day sending about 10 files of 25 MB is roughly 2.5 GB a day, around 75 GB a month. That fits Cloudflare Realtime TURN (1 TB/month free); a 500 MB plan such as Metered's no-card tier only lasts for a few dozen transfers.
+  - Through the relay: **25 MB per file**, **one file every 30 seconds** per device and per IP address, a byte budget per session, and a daily cap on relay sessions for everyone (150 by default, `RELAY_DAILY_MAX`).
+  - Sizing: about 10 people a day sending about 10 files of 25 MB is roughly 2.5 GB a day. Cloudflare does not bill bandwidth, and every 64 KB frame counts as 1/20 of a request, so 25 MB is about 20 requests of the 100,000 a day that the free plan includes. There is no separate relay quota to run out of.
 - **One file at a time** per pair of devices, **1 GB** per file.
 - **"Nearby" means "same public IP".** Behind a VPN or proxy, use a room code instead.
 - **Speed depends on the browsers and network.** Expect tens of MB/s on a good local network, not line rate.

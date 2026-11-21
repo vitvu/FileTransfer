@@ -84,67 +84,20 @@ const ANIMALS = ["Fox", "Cat", "Dog", "Tiger", "Bear", "Rabbit", "Wolf", "Owl", 
 const COLORS = ["Blue", "Red", "Gold", "Purple", "Orange", "Pink", "Brown", "Teal", "Green", "Silver"];
 const pick = (a) => a[crypto.getRandomValues(new Uint32Array(1))[0] % a.length];
 
-// TURN relay credentials. Peers on different networks often cannot connect directly (mobile carriers,
-// corporate NAT), so the data is relayed (still end-to-end encrypted by DTLS). Relay bandwidth is limited and
-// shared, so credentials are handed out sparingly: only on request (`?relay=1`, used for code rooms), at most
-// once per RELAY_COOLDOWN_MS per client IP, at most RELAY_DAILY_MAX times per day for everyone, and (Cloudflare) they expire
-// after RELAY_TTL_S. Configure ONE provider with Worker secrets (never in the repo):
-//   Cloudflare Realtime TURN: TURN_KEY_ID, TURN_KEY_API_TOKEN
-//   Metered Open Relay:       METERED_APP, METERED_API_KEY (static credential; free plan)
+// ---------- relay limits ----------
+// Devices that cannot connect directly (strict NAT on both sides) can fall back to relaying their (end-to-end
+// encrypted) data through this Worker. Cloudflare does not bill bandwidth, but the free plan has request and
+// duration limits, so the relay is used sparingly: code rooms only, one session per client IP every
+// RELAY_COOLDOWN_MS, at most RELAY_DAILY_MAX sessions a day for everyone, and a byte budget per session.
 const RELAY_COOLDOWN_MS = 30 * 1000;
 const RELAY_DAILY_MAX_DEFAULT = 150;
-const RELAY_TTL_S = 10 * 60;
-const STUN = [{ urls: ["stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"] }];
+const RELAY_BUDGET_DEFAULT = 32 * 1024 * 1024; // a 25 MB file plus framing and control messages
+const RELAY_FRAME_MAX = 80 * 1024;
 
-const iceResponse = (servers, relay) =>
-  new Response(JSON.stringify({ iceServers: servers, relay }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
-
+// Tiny counters (one Durable Object per client IP and per day), see Room.counter below.
 async function counter(env, name, query) {
   const r = await env.ROOMS.get(env.ROOMS.idFromName(name)).fetch(`https://rl.internal/rl?${query}`);
   return (await r.json()).why || "ok";
-}
-
-async function relayServers(env) {
-  if (env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) {
-    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${env.TURN_KEY_ID}/credentials/generate-ice-servers`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${env.TURN_KEY_API_TOKEN}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ttl: RELAY_TTL_S }),
-    });
-    if (!r.ok) return null;
-    const d = await r.json();
-    return Array.isArray(d.iceServers) && d.iceServers.length ? d.iceServers : null;
-  }
-  if (env.METERED_APP && env.METERED_API_KEY) {
-    // Metered's free plan allows a single credential, so this one is static; the limits above are what protects it.
-    const r = await fetch(`https://${encodeURIComponent(env.METERED_APP)}.metered.live/api/v1/turn/credentials?apiKey=${encodeURIComponent(env.METERED_API_KEY)}`);
-    if (!r.ok) return null;
-    const list = await r.json();
-    return Array.isArray(list) && list.length ? list : null;
-  }
-  return null;
-}
-
-async function iceServers(request, url, env) {
-  const origin = request.headers.get("Origin");
-  if (origin && !originAllowed(origin, url, env)) return new Response("Forbidden", { status: 403 });
-  if (url.searchParams.get("relay") !== "1") return iceResponse(STUN, "off");
-  if (!(env.TURN_KEY_ID && env.TURN_KEY_API_TOKEN) && !(env.METERED_APP && env.METERED_API_KEY)) return iceResponse(STUN, "off");
-  try {
-    // 1) one grant per client IP every 30 s (IPv6 is grouped by /64), 2) a daily cap for everyone
-    const ip = lanKey(request.headers.get("CF-Connecting-IP"));
-    const cool = env.RELAY_COOLDOWN_MS === undefined ? RELAY_COOLDOWN_MS : Number(env.RELAY_COOLDOWN_MS) || 0; // overridable, for testing
-    const per = cool ? await counter(env, "rl:ip:" + ip, `cool=${cool}&ttl=${cool * 2}`) : "ok";
-    if (per !== "ok") return iceResponse(STUN, "throttled");
-    const day = new Date().toISOString().slice(0, 10);
-    const max = Number(env.RELAY_DAILY_MAX) || RELAY_DAILY_MAX_DEFAULT;
-    const all = await counter(env, "rl:day:" + day, `max=${max}&ttl=${26 * 3600 * 1000}`);
-    if (all !== "ok") return iceResponse(STUN, "full");
-    const servers = await relayServers(env);
-    return servers ? iceResponse([...STUN, ...servers], "ok") : iceResponse(STUN, "off");
-  } catch {
-    return iceResponse(STUN, "off");
-  }
 }
 
 // ---------- Worker (entry point) ----------
@@ -152,7 +105,6 @@ async function iceServers(request, url, env) {
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (url.pathname === "/ice") return iceServers(request, url, env);
     if (url.pathname !== "/ws"|| request.headers.get("Upgrade") !== "websocket") {
       return new Response("Not found", { status: 404 });
     }
@@ -215,6 +167,7 @@ export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    this.relay = new Map(); // ws -> { ok, bytes }: relay sessions that were granted
   }
 
   live(except) {
@@ -281,12 +234,55 @@ export class Room extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
+  // Relay: a device asks for a relay session, and (once granted) its binary frames are forwarded to the other
+  // device of the room. The frames are opaque ciphertext; nothing is stored.
+  async relayStart(ws) {
+    const reply = (o) => {
+      try {
+        ws.send(JSON.stringify(o));
+      } catch {}
+    };
+    const me = ws.deserializeAttachment();
+    if (!me.room || this.live(ws).length === 0) return reply({ t: "rly-no", why: "alone" });
+    const cool = this.env.RELAY_COOLDOWN_MS === undefined ? RELAY_COOLDOWN_MS : Number(this.env.RELAY_COOLDOWN_MS) || 0; // overridable, for testing
+    const ip = lanKey(me.net && me.net.ip);
+    if (cool && (await counter(this.env, "rl:ip:" + ip, `cool=${cool}&ttl=${cool * 2}`)) !== "ok") return reply({ t: "rly-no", why: "throttled" });
+    const max = Number(this.env.RELAY_DAILY_MAX) || RELAY_DAILY_MAX_DEFAULT;
+    const day = new Date().toISOString().slice(0, 10);
+    if ((await counter(this.env, "rl:day:" + day, `max=${max}&ttl=${26 * 3600 * 1000}`)) !== "ok") return reply({ t: "rly-no", why: "full" });
+    this.relay.set(ws, { ok: true, bytes: 0 });
+    reply({ t: "rly-ok" });
+  }
+
+  relayFrame(ws, buf) {
+    const me = ws.deserializeAttachment();
+    const st = this.relay.get(ws);
+    const budget = Number(this.env.RELAY_BUDGET_BYTES) || RELAY_BUDGET_DEFAULT;
+    if (!me.room || !st || !st.ok || buf.byteLength > RELAY_FRAME_MAX) return;
+    if (st.bytes + buf.byteLength > budget) {
+      st.ok = false;
+      try {
+        ws.send(JSON.stringify({ t: "rly-no", why: "limit" }));
+      } catch {}
+      return;
+    }
+    st.bytes += buf.byteLength;
+    for (const s of this.live(ws)) s.send(buf);
+  }
+
   async webSocketMessage(ws, message) {
-    if (typeof message !== "string" || message.length > MAX_MSG) return;
+    if (typeof message !== "string") return this.relayFrame(ws, message);
+    if (message.length > MAX_MSG) return;
     let m;
     try {
       m = JSON.parse(message);
     } catch {
+      return;
+    }
+    if (m.t === "rly-start") return this.relayStart(ws);
+    if (m.t === "rly-end") {
+      const st = this.relay.get(ws);
+      if (st) st.ok = false;
       return;
     }
     if (m.t !== "sig" || typeof m.to !== "string") return;

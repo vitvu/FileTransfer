@@ -34,23 +34,21 @@ Remove the `routes` line, set `workers_dev = true`, and put the URL that Wrangle
 
 > The `workers.dev` hostname contains your Cloudflare account subdomain. If you would rather not publish it, use Option A or rename the subdomain in the dashboard.
 
-## 2. TURN relay (needed for devices on different networks)
+## 2. Relay fallback (no setup needed)
 
-Devices on the same network connect directly. Across networks, many connections (mobile data, corporate or carrier NAT) cannot be made directly and need a relay (TURN), otherwise the transfer times out. The Worker serves short-lived credentials on `/ice` from [Cloudflare Realtime TURN](https://developers.cloudflare.com/realtime/turn/) (free tier: 1 TB/month).
+Devices on the same network connect directly. If two devices in a **code room** cannot connect directly (strict NAT on both sides), they fall back after 12 seconds to a relay through the same Worker. The data is encrypted in the browsers (AES-GCM, ECDH key exchange), so the Worker only forwards ciphertext. It needs no API keys, no card and no extra service, and it stays within the Cloudflare free plan.
 
-1. Dashboard → **Realtime → TURN Server → Create**. Note the *TURN Token ID* and *API Token*.
-2. Store them as Worker secrets:
+Because it is shared and free, the relay is limited by the Worker (`src/worker.js`) and the client (`public/app.js`):
 
-```bash
-npx wrangler secret put TURN_KEY_ID
-npx wrangler secret put TURN_KEY_API_TOKEN
-```
+| Limit | Default | Where |
+|-------|---------|-------|
+| One relay session per client IP (IPv6 grouped by /64) | every 30 s | `RELAY_COOLDOWN_MS` |
+| Relay sessions per day, for everyone | 150 | `RELAY_DAILY_MAX` |
+| Bytes forwarded per session | 32 MB | `RELAY_BUDGET_BYTES` |
+| File size over the relay | 25 MB | `RELAY_MAX` (client) |
+| Files over the relay | one per 30 s per device | `RELAY_GAP` (client) |
 
-**No card? Small alternative:** create an app at [Metered Open Relay](https://www.metered.ca/tools/openrelay/) (the 500 MB plan needs no card), add one credential, then set the secrets `METERED_APP` (the part before `.metered.live`) and `METERED_API_KEY` (the credential's API key) instead. The free plan allows a single static credential and only 500 MB a month, so it suits testing and light use.
-
-**Relay limits** (all enforced by the Worker, in `src/worker.js` and `public/app.js`): credentials are only issued to code rooms, once per client IP every 30 seconds (IPv6 grouped by /64), and at most `RELAY_DAILY_MAX` times a day in total (default 150; set it as a plain variable in `wrangler.toml`). Files over the relay are capped at 25 MB (`RELAY_MAX`) and one file per 30 seconds per device. All keys live in Worker secrets, never in the repository.
-
-Relayed data stays end-to-end encrypted (DTLS); the relay only sees ciphertext. Without these secrets the app uses STUN only.
+Set the first three as plain variables in `wrangler.toml` under `[vars]` if you want to change them.
 
 ## 3. Automatic deploys (optional)
 
@@ -78,7 +76,7 @@ The files in `public/` work on any static host (Cloudflare Pages, GitHub Pages, 
 | `JOIN_LIMITER`, `WS_LIMITER` | `wrangler.toml` | Best-effort rate limits per client IP: 10 room joins / 60 connections per minute. |
 | `signalingUrl` | `public/config.js` | Signaling WebSocket URL. Empty means "same origin". |
 | `MAX_SIZE`, `CHUNK`, `HIGH`, `LOW`, `STREAM_MIN` | `public/app.js` | File size limit, flow-control tuning, and the size above which Chrome/Edge stream to disk (200 MB). |
-| `ICE` | `public/app.js` | STUN and TURN servers. |
+| `STUN`, `RELAY_AFTER` | `public/app.js` | STUN servers, and how long to wait for a direct connection before using the relay (12 s). |
 | `ROOM_IDLE_MS`, `ROOM_MAX`, `LAN_MAX` | `src/worker.js` | Room expiry (10 min), room size (2), LAN group size (20). |
 | Translations | `public/i18n.js` | English and Vietnamese strings. Add a language by adding a dictionary. |
 | Security headers | `public/_headers` | CSP, HSTS and friends for the static site. |
@@ -86,7 +84,7 @@ The files in `public/` work on any static host (Cloudflare Pages, GitHub Pages, 
 ## Project structure
 
 ```
-public/            Static web app: index.html, app.js, modal.js, device.js, i18n.js, theme.js, style.css, config.js, _headers
+public/            Static web app: index.html, app.js, relay.js, modal.js, device.js, i18n.js, theme.js, style.css, config.js, _headers
 src/worker.js      Signaling Worker and Room Durable Object
 test/              Signaling integration tests
 docs/              This guide and the README screenshots
